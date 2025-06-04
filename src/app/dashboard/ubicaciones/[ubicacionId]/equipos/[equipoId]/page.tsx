@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter, Link as NextLink } from 'next/navigation'; // Renamed Link to NextLink
+import { useParams, useRouter } from 'next/navigation';
+import NextLink from 'next/link'; // Corrected import and kept alias for clarity
 import { doc, onSnapshot, collection, query, orderBy, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { Equipo, Puerto, Ubicacion } from '@/types';
@@ -11,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft, Cpu, Edit, HardDrive, LinkIcon, MapPin, Package, Tag, Wifi } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
-import { PortList } from './components/port-list'; // To be created
+import { PortList } from './components/port-list'; 
 import { format } from 'date-fns';
 // For editing the equipment itself
 // import { EquipoForm } from '../components/equipment-form'; 

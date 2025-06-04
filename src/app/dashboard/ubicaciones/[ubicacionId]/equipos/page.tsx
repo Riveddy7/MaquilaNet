@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter, Link } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link'; // Corrected import
 import { PlusCircle, Edit, Trash2, Cpu, Search, ArrowLeft, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,7 +29,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { EquipoForm } from './components/equipment-form'; // To be created
+import { EquipoForm } from './components/equipment-form';
 import { useAuth } from '@/contexts/auth-context';
 import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
