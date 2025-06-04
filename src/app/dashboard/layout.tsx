@@ -1,6 +1,7 @@
 'use client';
 
-import { AppSidebar, SidebarProvider } from '@/components/ui/sidebar'; // Updated import
+import { AppSidebar } from '@/components/layout/sidebar';
+import { SidebarProvider } from '@/components/ui/sidebar';
 import { AppNavbar } from '@/components/layout/navbar';
 import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
