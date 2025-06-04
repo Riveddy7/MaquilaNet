@@ -40,6 +40,8 @@ interface PuertoFormProps {
   onSuccess: () => void;
 }
 
+const NO_NODO_VALUE = "__NO_NODO__";
+
 export function PortForm({ equipoId, portNumber, puerto, allNodos, onSuccess }: PuertoFormProps) {
   const { toast } = useToast();
   const { userProfile } = useAuth();
@@ -159,14 +161,17 @@ export function PortForm({ equipoId, portNumber, puerto, allNodos, onSuccess }: 
           render={({ field }) => (
             <FormItem>
               <FormLabel>Nodo Conectado (Opcional)</FormLabel>
-              <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+              <Select
+                onValueChange={(value) => field.onChange(value === NO_NODO_VALUE ? null : value)}
+                defaultValue={field.value ?? NO_NODO_VALUE}
+              >
                 <FormControl>
                   <SelectTrigger>
                     <SelectValue placeholder="Selecciona un nodo si está ocupado" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="">Ninguno</SelectItem>
+                  <SelectItem value={NO_NODO_VALUE}>Ninguno</SelectItem>
                   {allNodos.map((nodo) => (
                     <SelectItem key={nodo.id} value={nodo.id}>
                       {nodo.nombreHost} ({nodo.tipoDispositivo})

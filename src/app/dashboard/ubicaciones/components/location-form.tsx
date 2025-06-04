@@ -38,6 +38,8 @@ interface UbicacionFormProps {
   onSuccess: () => void;
 }
 
+const NO_PARENT_VALUE = "__NO_PARENT__";
+
 export function UbicacionForm({ ubicacion, allUbicaciones, onSuccess }: UbicacionFormProps) {
   const { toast } = useToast();
   const { userProfile } = useAuth();
@@ -132,14 +134,17 @@ export function UbicacionForm({ ubicacion, allUbicaciones, onSuccess }: Ubicacio
           render={({ field }) => (
             <FormItem>
               <FormLabel>Ubicación Principal (Opcional)</FormLabel>
-              <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+              <Select
+                onValueChange={(value) => field.onChange(value === NO_PARENT_VALUE ? null : value)}
+                defaultValue={field.value ?? NO_PARENT_VALUE}
+              >
                 <FormControl>
                   <SelectTrigger>
                     <SelectValue placeholder="Selecciona ubicación principal (si aplica)" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="">Ninguna</SelectItem>
+                  <SelectItem value={NO_PARENT_VALUE}>Ninguna</SelectItem>
                   {parentOptions.map((parent) => (
                     <SelectItem key={parent.id} value={parent.id}>
                       {parent.nombre} ({parent.tipo})
