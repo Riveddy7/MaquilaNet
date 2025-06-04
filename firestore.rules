@@ -1,0 +1,58 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to get user's organizationId from their profile
+    function getUserOrganizationId(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data.organizationId;
+    }
+
+    // Organizations: Only readable by users within that organization (e.g., admins)
+    // Creation is typically handled server-side or by specific trusted logic (e.g., on user signup)
+    match /organizations/{orgId} {
+      allow read: if request.auth != null && getUserOrganizationId(request.auth.uid) == orgId;
+      // Write access should be restricted, e.g., only by system or specific admin roles
+      allow write: if false; // Example: restrict direct client writes
+      // allow create: if request.auth != null; // If new orgs are created client-side with user
+    }
+
+    // Users: Users can read their own profile. Admins of an org might read users in their org.
+    match /users/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || getUserOrganizationId(request.auth.uid) == resource.data.organizationId); // User can read own, or if in same org (for admin views)
+      allow create: if request.auth != null && request.auth.uid == userId; // User creates their own profile on signup
+      allow update: if request.auth != null && request.auth.uid == userId; // User can update their own profile
+      allow delete: if false; // Typically users are not deleted this way
+    }
+
+    // Generic rule for organization-scoped data
+    function isUserInOrg(organizationId) {
+      return request.auth != null && getUserOrganizationId(request.auth.uid) == organizationId;
+    }
+    
+    match /ubicaciones/{docId} {
+      allow read, write: if isUserInOrg(resource.data.organizationId) || isUserInOrg(request.resource.data.organizationId);
+    }
+
+    match /equipos/{docId} {
+      allow read, write: if isUserInOrg(resource.data.organizationId) || isUserInOrg(request.resource.data.organizationId);
+    }
+
+    match /puertos/{docId} {
+      allow read, write: if isUserInOrg(resource.data.organizationId) || isUserInOrg(request.resource.data.organizationId);
+    }
+
+    match /nodos/{docId} {
+      allow read, write: if isUserInOrg(resource.data.organizationId) || isUserInOrg(request.resource.data.organizationId);
+    }
+    
+    match /rfid_tags/{docId} {
+      allow read, write: if isUserInOrg(resource.data.organizationId) || isUserInOrg(request.resource.data.organizationId);
+    }
+    
+    match /rfid_censos/{docId} {
+      allow read, write: if isUserInOrg(resource.data.organizationId) || isUserInOrg(request.resource.data.organizationId);
+    }
+
+  }
+}
