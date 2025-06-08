@@ -1,11 +1,8 @@
-// This page can serve as a global equipment list or search.
-// For MVP, it might be simpler to primarily manage equipment within specific locations.
-// /dashboard/ubicaciones/[ubicacionId]/equipos/page.tsx will be the primary equipment management interface per location.
-
+// src/app/(dashboard)/equipos/page.tsx (Refactored)
 'use client';
 
-import { useState, useEffect } from 'react';
-import { PlusCircle, Edit, Trash2, Cpu, Search, SlidersHorizontal, MapPin } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { PlusCircle, Edit, Trash2, Cpu, Search, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -25,12 +22,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
-// import { EquipoForm } from './components/equipment-form'; // Global form might be different or not needed if always location-specific
-import { useAuth } from '@/contexts/auth-context';
-import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/client';
-import type { Equipo, Ubicacion } from '@/types';
-import { format } from 'date-fns';
+import { useAuth } from '@/contexts/auth-context'; // For getting user and token
+// Removed Firestore imports
+import type { Equipo } from '@/types'; // Assuming Equipo might not have ubicacionNombre
 import { useToast } from '@/hooks/use-toast';
 import {
   AlertDialog,
@@ -44,90 +38,94 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+// This interface should match the structure returned by GET /api/equipos
 interface EquipoConUbicacion extends Equipo {
+  id: string; // Ensure 'id' is part of the base Equipo or explicitly here
   ubicacionNombre?: string;
+  // Add other fields from 'equipos' table that are in Equipo type and returned by API
+  // e.g. nombre, tipo, marca, modelo, serialNumber, estado etc.
 }
 
 export default function EquiposGlobalPage() {
   const [equipos, setEquipos] = useState<EquipoConUbicacion[]>([]);
-  const [ubicacionesMap, setUbicacionesMap] = useState<Map<string, string>>(new Map());
+  // ubicacionesMap is no longer needed as ubicacionNombre comes from API
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth(); // user from useAuth for getIdToken()
   const { toast } = useToast();
 
-  useEffect(() => {
-    if (!userProfile?.organizationId) return;
-
-    setLoading(true);
-    // Fetch all ubicaciones for the organization to map IDs to names
-    const ubicacionesQuery = query(
-      collection(db, 'ubicaciones'),
-      where('organizationId', '==', userProfile.organizationId)
-    );
-
-    const unsubUbicaciones = onSnapshot(ubicacionesQuery, (querySnapshot) => {
-      const uMap = new Map<string, string>();
-      querySnapshot.forEach((doc) => {
-        const data = doc.data() as Ubicacion;
-        uMap.set(doc.id, data.nombre);
-      });
-      setUbicacionesMap(uMap);
-
-      // Fetch all equipos for the organization
-      const equiposQuery = query(
-        collection(db, 'equipos'),
-        where('organizationId', '==', userProfile.organizationId),
-        orderBy('createdAt', 'desc')
-      );
-
-      const unsubEquipos = onSnapshot(equiposQuery, (equiposSnapshot) => {
-        const data: EquipoConUbicacion[] = [];
-        equiposSnapshot.forEach((doc) => {
-          const equipoData = { id: doc.id, ...doc.data() } as Equipo;
-          data.push({
-            ...equipoData,
-            ubicacionNombre: uMap.get(equipoData.ubicacionId) || 'Desconocida',
-          });
-        });
-        setEquipos(data);
-        setLoading(false);
-      }, (error) => {
-        console.error("Error fetching equipos:", error);
-        toast({ title: "Error", description: "No se pudieron cargar los equipos.", variant: "destructive"});
-        setLoading(false);
-      });
-      return () => unsubEquipos();
-    }, (error) => {
-      console.error("Error fetching ubicaciones map:", error);
-      toast({ title: "Error", description: "No se pudieron cargar datos de ubicaciones.", variant: "destructive"});
+  const fetchEquipos = useCallback(async () => {
+    if (!user || !userProfile?.organizationId) {
       setLoading(false);
-    });
-    
-    return () => unsubUbicaciones();
-  }, [userProfile?.organizationId, toast]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch('/api/equipos', { // Fetches all equipos for the org
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch equipos');
+      }
+      const data: EquipoConUbicacion[] = await response.json();
+      setEquipos(data);
+    } catch (error: any) {
+      console.error("Error fetching equipos:", error);
+      toast({ title: "Error", description: error.message || "No se pudieron cargar los equipos.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }, [user, userProfile?.organizationId, toast]);
+
+  useEffect(() => {
+    fetchEquipos();
+  }, [fetchEquipos]);
 
 
   const handleDelete = async (equipo: EquipoConUbicacion) => {
-    if (!userProfile?.organizationId) return;
+    if (!user || !userProfile?.organizationId) return;
+
     try {
-      // TODO: Check for associated ports or other dependencies before deleting
-      await deleteDoc(doc(db, 'equipos', equipo.id));
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/equipos/${equipo.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete equipo');
+      }
+
       toast({ title: "Equipo eliminado", description: `El equipo "${equipo.nombre}" ha sido eliminado.`});
-    } catch (error) {
+      // Refetch or remove from local state
+      setEquipos(prevEquipos => prevEquipos.filter(e => e.id !== equipo.id));
+
+    } catch (error: any) {
       console.error("Error deleting equipo: ", error);
-      toast({ title: "Error", description: "No se pudo eliminar el equipo.", variant: "destructive"});
+      toast({ title: "Error", description: error.message || "No se pudo eliminar el equipo.", variant: "destructive"});
     }
   };
   
   const filteredEquipos = equipos.filter(e => 
     e.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.tipo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (e.tipo && e.tipo.toLowerCase().includes(searchTerm.toLowerCase())) || // check if tipo exists
     (e.marca && e.marca.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (e.modelo && e.modelo.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (e.serialNumber && e.serialNumber.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (e.ubicacionNombre && e.ubicacionNombre.toLowerCase().includes(searchTerm.toLowerCase()))
   );
+
+  // The rest of the JSX structure remains largely the same.
+  // Links to specific equipo pages like `/dashboard/ubicaciones/${equipo.ubicacionId}/equipos/${equipo.id}`
+  // will also need to be updated eventually if the routing structure for viewing/editing single items changes,
+  // or those target pages will need to be refactored to use API calls too.
 
   return (
     <div className="container mx-auto py-8">
@@ -143,7 +141,6 @@ export default function EquiposGlobalPage() {
                   Visualiza todos los equipos de red registrados en tu organización.
                 </CardDescription>
               </div>
-              {/* For MVP, creating equipment is tied to a location. This button could lead to location selection first. */}
               <Button disabled> 
                 <PlusCircle className="mr-2 h-4 w-4" /> Nuevo Equipo (desde Ubicación)
               </Button>
@@ -159,7 +156,6 @@ export default function EquiposGlobalPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              {/* <Button variant="outline"><SlidersHorizontal className="mr-2 h-4 w-4" /> Filtros</Button> */}
             </div>
           </CardHeader>
           <CardContent>
@@ -172,7 +168,7 @@ export default function EquiposGlobalPage() {
                   <Cpu className="mx-auto h-12 w-12 text-muted-foreground" />
                   <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron equipos</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {searchTerm ? "Intenta con otra búsqueda." : "Registra equipos dentro de sus ubicaciones."}
+                    {searchTerm ? "Intenta con otra búsqueda." : "No hay equipos registrados o no se pudieron cargar."}
                   </p>
                 </div>
             ) : (
@@ -193,6 +189,7 @@ export default function EquiposGlobalPage() {
                     {filteredEquipos.map((equipo) => (
                       <TableRow key={equipo.id}>
                         <TableCell className="font-medium">
+                           {/* This link will eventually point to a page that also needs refactoring */}
                            <Link href={`/dashboard/ubicaciones/${equipo.ubicacionId}/equipos/${equipo.id}`} className="hover:underline text-primary">
                             {equipo.nombre}
                           </Link>
@@ -201,14 +198,15 @@ export default function EquiposGlobalPage() {
                         <TableCell>{equipo.marca || '-'} / {equipo.modelo || '-'}</TableCell>
                         <TableCell>{equipo.serialNumber || '-'}</TableCell>
                         <TableCell>
+                          {/* This link will eventually point to a page that also needs refactoring */}
                           <Link href={`/dashboard/ubicaciones/${equipo.ubicacionId}`} className="hover:underline text-sm">
-                            <MapPin className="inline mr-1 h-3 w-3 text-muted-foreground"/>{equipo.ubicacionNombre}
+                            <MapPin className="inline mr-1 h-3 w-3 text-muted-foreground"/>{equipo.ubicacionNombre || 'N/A'}
                           </Link>
                         </TableCell>
                         <TableCell>
                           <Badge 
                             variant={equipo.estado === 'Activo' ? 'default' : equipo.estado === 'Inactivo' ? 'destructive' : 'secondary'}
-                            className={equipo.estado === 'Activo' ? 'bg-green-500 text-white' : ''}
+                            // className={equipo.estado === 'Activo' ? 'bg-green-500 text-white' : ''} // Standard badge variants should handle colors
                           >
                             {equipo.estado}
                           </Badge>
@@ -236,7 +234,8 @@ export default function EquiposGlobalPage() {
                                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
                                 <AlertDialogAction
                                   onClick={() => handleDelete(equipo)}
-                                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                                  // className="bg-destructive hover:bg-destructive/90 text-destructive-foreground" // Standard destructive variant should handle this
+                                  variant="destructive"
                                 >
                                   Eliminar
                                 </AlertDialogAction>

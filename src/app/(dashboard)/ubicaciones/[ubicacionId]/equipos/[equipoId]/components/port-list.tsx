@@ -1,7 +1,10 @@
+// port-list.tsx
 'use client';
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/contexts/auth-context';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
+import { Trash2, Edit, PowerIcon, CableIcon, InfoIcon, NetworkIcon, ServerIcon, ShieldAlertIcon, WorkflowIcon } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -11,210 +14,207 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Edit3, Link2, Slash, WifiOff, Wifi, AlertCircle, CheckCircle2, Settings2 } from 'lucide-react';
-import { useAuth } from '@/contexts/auth-context';
-import { db } from '@/lib/firebase/client';
-import { collection, query, where, onSnapshot, doc, getDoc, orderBy } from 'firebase/firestore';
-import type { Puerto, Nodo } from '@/types';
-import { useToast } from '@/hooks/use-toast';
-import { PortForm } from './port-form'; // To be created
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+  } from "@/components/ui/alert-dialog";
+import { PuertoEstadoEnum, PuertoTipoEnum } from '@/lib/schemas'; // For enums
+import * as z from 'zod';
+
+
+export interface AppPuerto {
+  id: string;
+  numeroPuerto: number;
+  tipoPuerto: z.infer<typeof PuertoTipoEnum>;
+  estado: z.infer<typeof PuertoEstadoEnum>;
+  nodoId?: string | null;
+  vlanId?: string | null;
+  descripcionConexion?: string | null;
+  nodoNombreHost?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // equipoId and organizationId are also returned by API, can be added if needed by UI directly
+}
 
 interface PortListProps {
   equipoId: string;
-  numeroDePuertos: number;
+  onEditPort: (puerto: AppPuerto) => void;
+  onPortsLoaded?: (ports: AppPuerto[]) => void; // Optional: callback when ports are loaded
+  refreshKey?: number; // Optional: to trigger re-fetch from parent
 }
 
-interface PuertoExtendido extends Puerto {
-  nodoNombreHost?: string;
-}
-
-export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
-  const [puertos, setPuertos] = useState<PuertoExtendido[]>([]);
-  const [nodosMap, setNodosMap] = useState<Map<string, Nodo>>(new Map());
+export function PortList({ equipoId, onEditPort, onPortsLoaded, refreshKey }: PortListProps) {
+  const [ports, setPorts] = useState<AppPuerto[]>([]);
   const [loading, setLoading] = useState(true);
-  const { userProfile } = useAuth();
+  const { user } = useAuth();
   const { toast } = useToast();
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingPuerto, setEditingPuerto] = useState<PuertoExtendido | null>(null);
-  const [selectedPortNumber, setSelectedPortNumber] = useState<number | null>(null);
 
+  const fetchPorts = useCallback(async () => {
+    if (!user || !equipoId) {
+        setLoading(false);
+        return;
+    }
+    setLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/puertos?equipoId=${equipoId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch ports');
+      }
+      const data = await response.json();
+      setPorts(data);
+      if (onPortsLoaded) {
+        onPortsLoaded(data);
+      }
+    } catch (error: any) {
+      console.error("Error fetching ports:", error);
+      toast({ title: "Error al cargar puertos", description: error.message, variant: "destructive" });
+      setPorts([]); // Clear ports on error
+      if (onPortsLoaded) {
+        onPortsLoaded([]);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [user, equipoId, toast, onPortsLoaded]);
 
   useEffect(() => {
-    if (!userProfile?.organizationId || !equipoId) return;
-    setLoading(true);
+    fetchPorts();
+  }, [fetchPorts, refreshKey]); // Add refreshKey as dependency
 
-    // Fetch Nodos to map nodoId to nombreHost
-    const nodosQuery = query(
-        collection(db, 'nodos'),
-        where('organizationId', '==', userProfile.organizationId)
-    );
-    const unsubNodos = onSnapshot(nodosQuery, (snapshot) => {
-        const newNodosMap = new Map<string, Nodo>();
-        snapshot.forEach(doc => newNodosMap.set(doc.id, { id: doc.id, ...doc.data() } as Nodo));
-        setNodosMap(newNodosMap);
-    });
-
-
-    const q = query(
-      collection(db, 'puertos'),
-      where('organizationId', '==', userProfile.organizationId),
-      where('equipoId', '==', equipoId),
-      orderBy('numeroPuerto')
-    );
-
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const data: PuertoExtendido[] = [];
-      querySnapshot.forEach((doc) => {
-        const puertoData = { id: doc.id, ...doc.data() } as Puerto;
-        data.push({
-            ...puertoData,
-            nodoNombreHost: puertoData.nodoId ? nodosMap.get(puertoData.nodoId)?.nombreHost : undefined
-        });
+  const handleDelete = async (portId: string) => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/puertos/${portId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
       });
-      setPuertos(data);
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching ports:", error);
-      toast({ title: "Error", description: "No se pudieron cargar los puertos.", variant: "destructive"});
-      setLoading(false);
-    });
-
-    return () => {
-        unsubscribe();
-        unsubNodos();
-    };
-  }, [equipoId, userProfile?.organizationId, toast, nodosMap]); // nodosMap added to re-run if it changes
-
-  const handleEdit = (puerto?: PuertoExtendido, portNumber?: number) => {
-    if (puerto) {
-        setEditingPuerto(puerto);
-        setSelectedPortNumber(puerto.numeroPuerto);
-    } else if (portNumber !== undefined) {
-        // Creating a new port record for a physical port that doesn't have one yet
-        setEditingPuerto(null);
-        setSelectedPortNumber(portNumber);
-    }
-    setIsFormOpen(true);
-  };
-
-  const getPortStatusIcon = (estado: Puerto['estado']) => {
-    switch (estado) {
-      case 'Libre': return <WifiOff className="h-4 w-4 text-green-500" />;
-      case 'Ocupado': return <Wifi className="h-4 w-4 text-blue-500" />;
-      case 'Dañado': return <AlertCircle className="h-4 w-4 text-red-500" />;
-      case 'Mantenimiento': return <Settings2 className="h-4 w-4 text-yellow-500" />;
-      default: return <Slash className="h-4 w-4 text-gray-400" />;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete port');
+      }
+      toast({ title: "Puerto eliminado", description: "El puerto ha sido eliminado exitosamente." });
+      setPorts(prev => prev.filter(p => p.id !== portId));
+    } catch (error: any) {
+      console.error("Error deleting port:", error);
+      toast({ title: "Error al eliminar puerto", description: error.message, variant: "destructive" });
     }
   };
 
-  const renderPorts = () => {
-    const portElements = [];
-    for (let i = 1; i <= numeroDePuertos; i++) {
-      const puertoData = puertos.find(p => p.numeroPuerto === i);
-      portElements.push(
-        <TableRow key={i}>
-          <TableCell className="font-mono">{i}</TableCell>
-          <TableCell>
-            {puertoData ? (
-                <Badge variant={
-                    puertoData.estado === 'Libre' ? 'default' 
-                    : puertoData.estado === 'Ocupado' ? 'secondary' 
-                    : puertoData.estado === 'Dañado' ? 'destructive' 
-                    : 'outline'}
-                    className={puertoData.estado === 'Libre' ? 'bg-green-100 text-green-700 border-green-300' : 
-                               puertoData.estado === 'Ocupado' ? 'bg-blue-100 text-blue-700 border-blue-300' : ''}
-                >
-                    {getPortStatusIcon(puertoData.estado)}
-                    <span className="ml-1">{puertoData.estado}</span>
-                </Badge>
-            ) : (
-                 <Badge variant="outline">
-                    <WifiOff className="h-4 w-4 text-gray-400 mr-1" />
-                    No Configurado
-                 </Badge>
-            )}
-          </TableCell>
-          <TableCell>{puertoData?.tipoPuerto || 'N/A'}</TableCell>
-          <TableCell>
-            {puertoData?.nodoId && (puertos.find(p => p.id === puertoData.id)?.nodoNombreHost || puertoData.nodoId) ? (
-                 <span className="flex items-center">
-                    <Link2 className="h-3 w-3 mr-1 text-muted-foreground"/> 
-                    {puertos.find(p => p.id === puertoData.id)?.nodoNombreHost || puertoData.nodoId}
-                 </span>
-            ) : '-'}
-          </TableCell>
-          <TableCell className="truncate max-w-xs">{puertoData?.descripcionConexion || '-'}</TableCell>
-          <TableCell className="text-right">
-            <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={() => handleEdit(puertoData, i)}>
-                    <Edit3 className="h-4 w-4" />
-                </Button>
-            </DialogTrigger>
-          </TableCell>
-        </TableRow>
-      );
+  const getPortStatusIcon = (status: z.infer<typeof PuertoEstadoEnum>) => {
+    switch (status) {
+      case 'Libre': return <PowerIcon className="h-4 w-4 text-green-500" />;
+      case 'Ocupado': return <CableIcon className="h-4 w-4 text-blue-500" />;
+      case 'Dañado': return <ShieldAlertIcon className="h-4 w-4 text-red-500" />;
+      case 'Mantenimiento': return <WorkflowIcon className="h-4 w-4 text-yellow-500" />;
+      default: return <InfoIcon className="h-4 w-4 text-gray-500" />;
     }
-    return portElements;
   };
 
-
-  if (loading) {
-    return <div className="text-center py-4">Cargando puertos...</div>;
+  const getPortTypeIcon = (type: z.infer<typeof PuertoTipoEnum>) => {
+    switch (type) {
+        case 'RJ45': return <NetworkIcon className="h-4 w-4 text-gray-700" />;
+        case 'SFP': return <ServerIcon className="h-4 w-4 text-purple-700" />; // Example, choose appropriate
+        case 'SFP+': return <ServerIcon className="h-4 w-4 text-indigo-700" />; // Example
+        default: return <CableIcon className="h-4 w-4 text-gray-500" />;
+    }
   }
 
+
+  if (loading) return (
+    <div className="flex justify-center items-center py-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+        <p className="ml-2">Cargando puertos...</p>
+    </div>
+  );
+
+  if (ports.length === 0 && !loading) return (
+    <div className="text-center py-8">
+        <CableIcon className="mx-auto h-12 w-12 text-muted-foreground" />
+        <h3 className="mt-2 text-sm font-medium">No hay puertos</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Este equipo no tiene puertos configurados o no se pudieron cargar.</p>
+    </div>
+    );
+
   return (
-    <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-      <div className="max-h-[500px] overflow-y-auto">
-        <Table>
-          <TableHeader className="sticky top-0 bg-card z-10">
-            <TableRow>
-              <TableHead className="w-[80px]">Puerto #</TableHead>
-              <TableHead>Estado</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Conectado a (Nodo)</TableHead>
-              <TableHead>Descripción</TableHead>
-              <TableHead className="text-right w-[100px]">Acciones</TableHead>
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>#</TableHead>
+            <TableHead>Tipo</TableHead>
+            <TableHead>Estado</TableHead>
+            <TableHead>Conectado a</TableHead>
+            <TableHead>VLAN</TableHead>
+            <TableHead>Descripción</TableHead>
+            <TableHead className="text-right">Acciones</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {ports.sort((a,b) => a.numeroPuerto - b.numeroPuerto).map(port => (
+            <TableRow key={port.id}>
+              <TableCell className="font-medium">{port.numeroPuerto}</TableCell>
+              <TableCell>
+                <Badge variant="outline" className="flex items-center w-min">
+                    {getPortTypeIcon(port.tipoPuerto)}
+                    <span className="ml-1">{port.tipoPuerto}</span>
+                </Badge>
+              </TableCell>
+              <TableCell>
+                <Badge variant={
+                    port.estado === 'Libre' ? 'default' :
+                    port.estado === 'Ocupado' ? 'secondary' :
+                    port.estado === 'Dañado' ? 'destructive' :
+                    'warning' // Mantenimiento
+                } className="flex items-center w-min">
+                   {getPortStatusIcon(port.estado)}
+                   <span className="ml-1">{port.estado}</span>
+                </Badge>
+              </TableCell>
+              <TableCell>{port.nodoNombreHost || '-'}</TableCell>
+              <TableCell>{port.vlanId || '-'}</TableCell>
+              <TableCell className="max-w-xs truncate">{port.descripcionConexion || '-'}</TableCell>
+              <TableCell className="text-right space-x-1">
+                <Button variant="ghost" size="icon" onClick={() => onEditPort(port)} title="Editar Puerto">
+                  <Edit className="h-4 w-4" />
+                </Button>
+                <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/80" title="Eliminar Puerto">
+                            <Trash2 className="h-4 w-4" />
+                        </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                        <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Esta acción no se puede deshacer. Esto eliminará permanentemente el puerto #{port.numeroPuerto}.
+                        </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => handleDelete(port.id)} variant="destructive">
+                            Eliminar
+                        </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {numeroDePuertos > 0 ? renderPorts() : (
-                <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                        Este equipo no tiene puertos numerados para gestionar o el número de puertos es 0.
-                    </TableCell>
-                </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      
-      {selectedPortNumber !== null && (
-        <DialogContent className="sm:max-w-lg">
-            <DialogHeader>
-            <DialogTitle className="font-headline">
-                {editingPuerto ? `Editar Puerto ${editingPuerto.numeroPuerto}` : `Configurar Puerto ${selectedPortNumber}`}
-            </DialogTitle>
-            </DialogHeader>
-            <PortForm
-                equipoId={equipoId}
-                puerto={editingPuerto}
-                portNumber={selectedPortNumber} // Pass the selected port number
-                allNodos={Array.from(nodosMap.values())}
-                onSuccess={() => {
-                    setIsFormOpen(false);
-                    setEditingPuerto(null);
-                    setSelectedPortNumber(null);
-                }}
-            />
-        </DialogContent>
-      )}
-    </Dialog>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
