@@ -1,3 +1,4 @@
+// src/app/(dashboard)/ubicaciones/[ubicacionId]/equipos/components/equipment-form.tsx (Conceptual)
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -21,278 +22,227 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+// import { Textarea } from '@/components/ui/textarea'; // For longer fields if any
+// import { Checkbox } from '@/components/ui/checkbox'; // If any boolean fields
 import { useToast } from '@/hooks/use-toast';
-import { equipoSchema, EquipoTipoEnum, EquipoEstadoEnum } from '@/lib/schemas';
-import type { Equipo } from '@/types';
 import { useAuth } from '@/contexts/auth-context';
-import { db } from '@/lib/firebase/client';
-import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { useState } from 'react';
-import { DialogFooter, DialogClose } from '@/components/ui/dialog';
+import { useRouter } from 'next/navigation';
+import { equipoSchema, EquipoTipoEnum, EquipoEstadoEnum } from '@/lib/schemas';
+import { useEffect, useState } from 'react';
 
-type EquipoFormValues = z.infer<typeof equipoSchema>;
-
-interface EquipoFormProps {
+// Define AppEquipo to match API response / data structure
+interface AppEquipo {
+  id: string;
+  nombre: string;
+  tipo: z.infer<typeof EquipoTipoEnum>;
+  marca?: string | null;
+  modelo?: string | null;
+  serialNumber?: string | null;
+  assetTag?: string | null;
+  ipGestion?: string | null;
+  rfidTagId?: string | null;
   ubicacionId: string;
-  equipo?: Equipo | null;
-  onSuccess: () => void;
+  rackPositionU?: number | null;
+  estado: z.infer<typeof EquipoEstadoEnum>;
+  numeroDePuertos: number;
+  organizationId?: string;
+  // ubicacionNombre?: string; // API might return this, but form usually deals with IDs
 }
 
-export function EquipoForm({ ubicacionId, equipo, onSuccess }: EquipoFormProps) {
-  const { toast } = useToast();
-  const { userProfile } = useAuth();
-  const [loading, setLoading] = useState(false);
+type EquipoFormData = z.infer<typeof equipoSchema>;
 
-  const form = useForm<EquipoFormValues>({
+interface EquipmentFormProps {
+  initialData?: AppEquipo;
+  ubicacionId: string; // Current location context, primarily for creation.
+                       // For editing, initialData.ubicacionId is the source of truth,
+                       // but this prop might be used to default/validate a move.
+  onSubmitSuccess?: (equipo: AppEquipo) => void;
+  // parentUbicaciones?: { id: string; nombre: string }[]; // For moving equipment
+}
+
+export function EquipmentForm({ initialData, ubicacionId, onSubmitSuccess }: EquipmentFormProps) {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const router = useRouter();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const defaultValues: EquipoFormData = { // Explicitly type defaultValues
+    nombre: initialData?.nombre || '',
+    tipo: initialData?.tipo || undefined,
+    marca: initialData?.marca || '',
+    modelo: initialData?.modelo || '',
+    serialNumber: initialData?.serialNumber || '',
+    assetTag: initialData?.assetTag || '',
+    ipGestion: initialData?.ipGestion || '',
+    rfidTagId: initialData?.rfidTagId || '',
+    rackPositionU: initialData?.rackPositionU === undefined ? null : initialData.rackPositionU, // Ensure null if undefined
+    estado: initialData?.estado || EquipoEstadoEnum.Enum.Activo, // Default to 'Activo'
+    numeroDePuertos: initialData?.numeroDePuertos === undefined ? 0 : initialData.numeroDePuertos, // Default to 0
+  };
+
+  const form = useForm<EquipoFormData>({
     resolver: zodResolver(equipoSchema),
-    defaultValues: {
-      nombre: equipo?.nombre || '',
-      tipo: equipo?.tipo || EquipoTipoEnum.Values.Switch,
-      marca: equipo?.marca || '',
-      modelo: equipo?.modelo || '',
-      serialNumber: equipo?.serialNumber || '',
-      assetTag: equipo?.assetTag || '',
-      ipGestion: equipo?.ipGestion || '',
-      rfidTagId: equipo?.rfidTagId || '',
-      rackPositionU: equipo?.rackPositionU || undefined,
-      estado: equipo?.estado || EquipoEstadoEnum.Values.Activo,
-      numeroDePuertos: equipo?.numeroDePuertos || 0,
-    },
+    defaultValues,
   });
 
-  const onSubmit = async (data: EquipoFormValues) => {
-    if (!userProfile?.organizationId || !ubicacionId) {
-      toast({ title: "Error", description: "Datos de sesión o ubicación inválidos.", variant: "destructive" });
+  useEffect(() => {
+    if (initialData) {
+      form.reset({
+        nombre: initialData.nombre,
+        tipo: initialData.tipo,
+        marca: initialData.marca || '',
+        modelo: initialData.modelo || '',
+        serialNumber: initialData.serialNumber || '',
+        assetTag: initialData.assetTag || '',
+        ipGestion: initialData.ipGestion || '',
+        rfidTagId: initialData.rfidTagId || '',
+        rackPositionU: initialData.rackPositionU === undefined ? null : initialData.rackPositionU,
+        estado: initialData.estado,
+        numeroDePuertos: initialData.numeroDePuertos === undefined ? 0 : initialData.numeroDePuertos,
+      });
+    }
+  }, [initialData, form]);
+
+  async function onSubmit(values: EquipoFormData) {
+    if (!user) {
+      toast({ title: "Error", description: "Debes iniciar sesión.", variant: "destructive" });
       return;
     }
-    setLoading(true);
+    setIsSubmitting(true);
 
-    const equipoData = {
-      ...data,
-      rackPositionU: data.rackPositionU ? Number(data.rackPositionU) : null,
-      numeroDePuertos: Number(data.numeroDePuertos),
-    };
+    // Determine the ubicacionId for the payload.
+    // For creation, it's from props. For update, it's from initialData.
+    // This form does not currently support moving an equipo to a different ubicacionId.
+    const payloadUbicacionId = initialData ? initialData.ubicacionId : ubicacionId;
+
+    const payload = { ...values, ubicacionId: payloadUbicacionId };
+
 
     try {
-      if (equipo) { // Editing existing equipo
-        const equipoRef = doc(db, 'equipos', equipo.id);
-        await updateDoc(equipoRef, {
-          ...equipoData,
-          updatedAt: serverTimestamp(),
-        });
-        toast({ title: "Éxito", description: "Equipo actualizado correctamente." });
-      } else { // Creating new equipo
-        await addDoc(collection(db, 'equipos'), {
-          ...equipoData,
-          ubicacionId: ubicacionId,
-          organizationId: userProfile.organizationId,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        toast({ title: "Éxito", description: "Equipo creado correctamente." });
+      const token = await user.getIdToken();
+      const method = initialData ? 'PUT' : 'POST';
+      const url = initialData ? `/api/equipos/${initialData.id}` : '/api/equipos';
+
+      const response = await fetch(url, {
+        method: method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload), // Send combined payload
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(responseData.error || `Failed to ${initialData ? 'update' : 'create'} equipo`);
       }
-      onSuccess();
+
+      toast({
+        title: `Equipo ${initialData ? 'actualizado' : 'creado'}`,
+        description: `El equipo "${responseData.nombre}" ha sido ${initialData ? 'actualizado' : 'creado'} exitosamente.`,
+      });
+
+      if (onSubmitSuccess) {
+        onSubmitSuccess(responseData as AppEquipo);
+      } else {
+        router.push(`/dashboard/ubicaciones/${payloadUbicacionId}`); // Go to the ubicacion's page
+        router.refresh();
+      }
+
     } catch (error: any) {
-      console.error("Error saving equipo:", error);
-      toast({ title: "Error", description: error.message || "No se pudo guardar el equipo.", variant: "destructive" });
+      console.error("Error submitting equipment form:", error);
+      toast({
+        title: "Error",
+        description: error.message || `No se pudo ${initialData ? 'actualizar' : 'crear'} el equipo.`,
+        variant: "destructive",
+      });
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
-  };
+  }
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField
-            control={form.control}
-            name="nombre"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Nombre del Equipo</FormLabel>
-                <FormControl>
-                  <Input placeholder="Ej: SW-CORE-PISO1, RTR-BORDE" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="tipo"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Tipo de Equipo</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona un tipo" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    {Object.values(EquipoTipoEnum.Values).map((tipo) => (
-                      <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField
-            control={form.control}
-            name="marca"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Marca (Opcional)</FormLabel>
-                <FormControl>
-                  <Input placeholder="Ej: Cisco, Juniper" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="modelo"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Modelo (Opcional)</FormLabel>
-                <FormControl>
-                  <Input placeholder="Ej: Catalyst 9300, MX204" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField
-            control={form.control}
-            name="serialNumber"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Número de Serie (Opcional)</FormLabel>
-                <FormControl>
-                  <Input placeholder="Ej: FTX12345ABC" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="assetTag"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Asset Tag (Opcional)</FormLabel>
-                <FormControl>
-                  <Input placeholder="Ej: MAQ-IT-00123" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField
-            control={form.control}
-            name="ipGestion"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>IP de Gestión (Opcional)</FormLabel>
-                <FormControl>
-                  <Input placeholder="Ej: 192.168.1.10" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-           <FormField
-            control={form.control}
-            name="rfidTagId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Tag RFID (Opcional)</FormLabel>
-                <FormControl>
-                  <Input placeholder="ID del Tag RFID" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-           <FormField
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+        <FormField
+          control={form.control}
+          name="nombre"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Nombre del Equipo</FormLabel>
+              <FormControl><Input placeholder="Ej: Switch Core Principal" {...field} /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="tipo"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Tipo de Equipo</FormLabel>
+              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                <FormControl><SelectTrigger><SelectValue placeholder="Selecciona un tipo" /></SelectTrigger></FormControl>
+                <SelectContent>
+                  {EquipoTipoEnum.options.map(option => (
+                    <SelectItem key={option} value={option}>{option}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField control={form.control} name="marca" render={({ field }) => (<FormItem><FormLabel>Marca</FormLabel><FormControl><Input placeholder="Ej: Cisco" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>)} />
+        <FormField control={form.control} name="modelo" render={({ field }) => (<FormItem><FormLabel>Modelo</FormLabel><FormControl><Input placeholder="Ej: Catalyst 9300" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>)} />
+        <FormField control={form.control} name="serialNumber" render={({ field }) => (<FormItem><FormLabel>Número de Serie</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>)} />
+        <FormField control={form.control} name="assetTag" render={({ field }) => (<FormItem><FormLabel>Asset Tag</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>)} />
+        <FormField control={form.control} name="ipGestion" render={({ field }) => (<FormItem><FormLabel>IP de Gestión</FormLabel><FormControl><Input placeholder="Ej: 192.168.1.10" {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>)} />
+        <FormField control={form.control} name="rfidTagId" render={({ field }) => (<FormItem><FormLabel>RFID Tag ID</FormLabel><FormControl><Input {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>)} />
+        <FormField
             control={form.control}
             name="rackPositionU"
             render={({ field }) => (
-              <FormItem>
-                <FormLabel>Posición en Rack (U) (Opcional)</FormLabel>
-                <FormControl>
-                  <Input type="number" placeholder="Ej: 23" {...field} onChange={e => field.onChange(parseInt(e.target.value))} />
-                </FormControl>
+                <FormItem>
+                <FormLabel>Posición en Rack (U)</FormLabel>
+                <FormControl><Input type="number" {...field} value={field.value ?? ''} onChange={e => field.onChange(e.target.value === '' ? null : parseInt(e.target.value,10))} /></FormControl>
                 <FormMessage />
-              </FormItem>
+                </FormItem>
             )}
-          />
-           <FormField
+        />
+        <FormField
             control={form.control}
             name="estado"
             render={({ field }) => (
-              <FormItem>
+                <FormItem>
                 <FormLabel>Estado</FormLabel>
                 <Select onValueChange={field.onChange} defaultValue={field.value}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona un estado" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    {Object.values(EquipoEstadoEnum.Values).map((estado) => (
-                      <SelectItem key={estado} value={estado}>{estado}</SelectItem>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Selecciona un estado" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                    {EquipoEstadoEnum.options.map(option => (
+                        <SelectItem key={option} value={option}>{option}</SelectItem>
                     ))}
-                  </SelectContent>
+                    </SelectContent>
                 </Select>
                 <FormMessage />
-              </FormItem>
+                </FormItem>
             )}
-          />
-          <FormField
+        />
+        <FormField
             control={form.control}
             name="numeroDePuertos"
             render={({ field }) => (
-              <FormItem>
+                <FormItem>
                 <FormLabel>Número de Puertos</FormLabel>
-                <FormControl>
-                  <Input type="number" placeholder="Ej: 24, 48" {...field} onChange={e => field.onChange(parseInt(e.target.value))} />
-                </FormControl>
-                 <FormDescription>Referencia para la gestión de puertos.</FormDescription>
+                <FormControl><Input type="number" {...field} value={field.value} onChange={e => field.onChange(parseInt(e.target.value,10) || 0)} /></FormControl>
                 <FormMessage />
-              </FormItem>
+                </FormItem>
             )}
-          />
-        </div>
-
-        <DialogFooter className="pt-4">
-          <DialogClose asChild>
-            <Button type="button" variant="outline" disabled={loading}>
-              Cancelar
-            </Button>
-          </DialogClose>
-          <Button type="submit" disabled={loading} className="bg-primary hover:bg-primary/90 text-primary-foreground">
-            {loading ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-foreground mr-2"></div>
-            ) : null}
-            {equipo ? 'Guardar Cambios' : 'Crear Equipo'}
-          </Button>
-        </DialogFooter>
+        />
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Guardando...' : (initialData ? 'Actualizar Equipo' : 'Crear Equipo')}
+        </Button>
       </form>
     </Form>
   );
