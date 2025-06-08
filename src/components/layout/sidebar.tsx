@@ -8,7 +8,7 @@ import {
   MapPin,
   Cpu,
   Network as NetworkIcon,
-  FileText, // Changed from ScanLine
+  Construction, // Changed icon for Planos de Planta
   Users,
   ChevronDown,
   Settings,
@@ -25,6 +25,7 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarSeparator,
+  useSidebar, // Import useSidebar hook
 } from '@/components/ui/sidebar';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/auth-context';
@@ -38,21 +39,21 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useState } from 'react';
-import { SheetTitle } from '../ui/sheet'; // For accessibility
+import { SheetTitle } from '@/components/ui/sheet';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/dashboard/ubicaciones', label: 'Ubicaciones', icon: MapPin },
-  { href: '/dashboard/equipos', label: 'Equipos', icon: Cpu },
-  { href: '/dashboard/nodos', label: 'Nodos Finales', icon: NetworkIcon },
-  { href: '/dashboard/planos-planta', label: 'Planos de Planta', icon: FileText }, // Updated item
-  // { href: '/dashboard/usuarios', label: 'Usuarios', icon: Users }, 
+  { href: '/dashboard/ubicaciones', label: 'Plantas', icon: MapPin }, // Updated label
+  { href: '/dashboard/equipos', label: 'Equipos Global', icon: Cpu }, // Updated label
+  { href: '/dashboard/nodos', label: 'Nodos Global', icon: NetworkIcon }, // Updated label
+  { href: '/dashboard/planos-planta', label: 'Planos de Planta', icon: Construction },
 ];
 
 export function AppSidebar() {
   const pathname = usePathname();
   const { userProfile, logout } = useAuth();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const { isMobile } = useSidebar(); // Get isMobile state
 
   const getInitials = (name?: string | null) => {
     if (!name) return 'U';
@@ -62,7 +63,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r">
       <SidebarHeader className="p-4">
-         <SheetTitle className="sr-only">Menú Principal</SheetTitle> {/* Added for mobile accessibility */}
+         {isMobile && <SheetTitle className="sr-only">Menú Principal</SheetTitle>} {/* Conditionally render SheetTitle */}
         <div className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center">
            <Link href="/dashboard" className="flex items-center gap-2">
             <NetworkIcon className="h-8 w-8 text-sidebar-primary" />
@@ -78,7 +79,7 @@ export function AppSidebar() {
               <Link href={item.href} passHref>
                 <SidebarMenuButton
                   asChild
-                  isActive={pathname.startsWith(item.href)}
+                  isActive={pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))}
                   tooltip={item.label}
                   className="justify-start"
                 >
@@ -130,7 +131,7 @@ export function AppSidebar() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled> 
+            <DropdownMenuItem disabled>
               <Settings className="mr-2 h-4 w-4" />
               <span>Settings</span>
             </DropdownMenuItem>
@@ -148,3 +149,4 @@ export function AppSidebar() {
     </Sidebar>
   );
 }
+    
