@@ -1,6 +1,7 @@
+
 import * as z from 'zod';
 
-export const UbicacionTipoEnum = z.enum(["Planta", "Edificio", "IDF", "MDF", "Rack"]);
+export const UbicacionTipoEnum = z.enum(["Planta", "IDF", "MDF"]); // Edificio and Rack removed
 export const EquipoTipoEnum = z.enum(["Switch", "Router", "Firewall", "Server", "Patch Panel"]);
 export const EquipoEstadoEnum = z.enum(["Activo", "Inactivo", "Mantenimiento"]);
 export const PuertoTipoEnum = z.enum(["RJ45", "SFP", "SFP+"]);
@@ -22,14 +23,12 @@ export const equipoSchema = z.object({
   assetTag: z.string().optional(),
   ipGestion: z.string().ip({ version: "v4", message: "IP de gestión inválida." }).optional().or(z.literal("")),
   rfidTagId: z.string().optional(),
-  // ubicacionId will be passed as a prop or from route, not part of the form directly usually
   rackPositionU: z.number().int().min(1).optional().nullable(),
   estado: EquipoEstadoEnum,
   numeroDePuertos: z.number().int().min(0, { message: "Número de puertos debe ser 0 o más." }),
 });
 
 export const puertoSchema = z.object({
-  // equipoId and numeroPuerto usually fixed or contextually determined
   tipoPuerto: PuertoTipoEnum,
   estado: PuertoEstadoEnum,
   nodoId: z.string().optional().nullable(),
@@ -46,8 +45,14 @@ export const nodoSchema = z.object({
   ubicacionFisicaFinal: z.string().optional(),
 });
 
-export const rfidCensoSchema = z.object({
-  ubicacionId: z.string().min(1, { message: "Debe seleccionar una ubicación." }),
-  rfidTagsLeidos: z.string().min(1, { message: "Debe ingresar al menos un tag RFID." })
-    .transform(val => val.split(/[\s,]+/).map(tag => tag.trim()).filter(tag => tag.length > 0)), // Split by space or comma, trim, remove empty
+// Removed rfidCensoSchema
+
+export const floorPlanSchema = z.object({
+  name: z.string().min(3, { message: "El nombre del plano debe tener al menos 3 caracteres." }),
+});
+
+export const locationMarkerSchema = z.object({
+  x: z.number().min(0).max(100), // Assuming percentage
+  y: z.number().min(0).max(100), // Assuming percentage
+  ubicacionId: z.string().min(1, "Debe seleccionar una ubicación para el marcador."),
 });

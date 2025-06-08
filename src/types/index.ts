@@ -1,3 +1,4 @@
+
 import type { Timestamp } from 'firebase/firestore';
 
 export interface Organization {
@@ -15,7 +16,7 @@ export interface UserProfile {
   createdAt: Timestamp;
 }
 
-export type UbicacionTipo = "Planta" | "Edificio" | "IDF" | "MDF" | "Rack";
+export type UbicacionTipo = "Planta" | "IDF" | "MDF"; // Edificio and Rack removed
 export interface Ubicacion {
   id: string;
   nombre: string;
@@ -38,7 +39,7 @@ export interface Equipo {
   assetTag?: string;
   ipGestion?: string;
   rfidTagId?: string;
-  ubicacionId: string;
+  ubicacionId: string; // This will be an IDF or MDF ID
   rackPositionU?: number;
   estado: EquipoEstado;
   numeroDePuertos: number;
@@ -76,6 +77,7 @@ export interface Nodo {
   updatedAt: Timestamp;
 }
 
+/* RfidTag might be reused or adapted if physical asset tagging is still desired without the AI census.
 export interface RfidTag {
   id: string; // RFID Tag UUID
   equipoId?: string | null; // FK to equipo if associated
@@ -83,7 +85,9 @@ export interface RfidTag {
   lastSeenAt?: Timestamp;
   lastSeenInUbicacionId?: string; // FK to ubicaciones
 }
+*/
 
+/* RFID Census related types removed as per request.
 export interface Discrepancia {
   tipo: 'FALTANTE' | 'NO_REGISTRADO';
   equipoId?: string; // ID of missing equipment
@@ -98,4 +102,28 @@ export interface RfidCenso {
   tagsLeidos: string[];
   discrepancias: Discrepancia[];
   organizationId: string;
+  faltantesCount: number;
+  noRegistradosCount: number;
+}
+*/
+
+// New types for Floor Plans
+export interface LocationMarker {
+  id: string; // Unique ID for the marker
+  x: number; // Relative X coordinate on the PDF page (percentage)
+  y: number; // Relative Y coordinate on the PDF page (percentage)
+  ubicacionId: string; // ID of the Ubicacion (IDF/MDF) this marker represents
+  ubicacionNombre: string; // For display convenience
+}
+
+export interface FloorPlan {
+  id: string;
+  name: string;
+  pdfUrl: string;
+  pdfStoragePath: string;
+  organizationId: string;
+  userId: string; // User who uploaded
+  markers: LocationMarker[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }

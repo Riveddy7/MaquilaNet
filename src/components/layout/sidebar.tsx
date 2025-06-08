@@ -1,3 +1,4 @@
+
 'use client';
 
 import Link from 'next/link';
@@ -6,11 +7,10 @@ import {
   LayoutDashboard,
   MapPin,
   Cpu,
-  Network as NetworkIcon, // Renamed to avoid conflict with Network component
-  ScanLine,
+  Network as NetworkIcon,
+  FileText, // Changed from ScanLine
   Users,
   ChevronDown,
-  ChevronRight,
   Settings,
   HelpCircle,
 } from 'lucide-react';
@@ -25,7 +25,7 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarSeparator,
-} from '@/components/ui/sidebar'; // Assuming this is the correct import path for the advanced sidebar
+} from '@/components/ui/sidebar';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/auth-context';
 import { Button } from '@/components/ui/button';
@@ -38,16 +38,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useState } from 'react';
+import { SheetTitle } from '../ui/sheet'; // For accessibility
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/ubicaciones', label: 'Ubicaciones', icon: MapPin },
-  // Equipos is nested under ubicaciones, so direct link might not be top-level.
-  // Adding a general link that could lead to a global equipment list or search.
   { href: '/dashboard/equipos', label: 'Equipos', icon: Cpu },
   { href: '/dashboard/nodos', label: 'Nodos Finales', icon: NetworkIcon },
-  { href: '/dashboard/inventario-rfid', label: 'Censo RFID', icon: ScanLine },
-  // { href: '/dashboard/usuarios', label: 'Usuarios', icon: Users }, // Optional for MVP
+  { href: '/dashboard/planos-planta', label: 'Planos de Planta', icon: FileText }, // Updated item
+  // { href: '/dashboard/usuarios', label: 'Usuarios', icon: Users }, 
 ];
 
 export function AppSidebar() {
@@ -63,6 +62,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r">
       <SidebarHeader className="p-4">
+         <SheetTitle className="sr-only">Menú Principal</SheetTitle> {/* Added for mobile accessibility */}
         <div className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center">
            <Link href="/dashboard" className="flex items-center gap-2">
             <NetworkIcon className="h-8 w-8 text-sidebar-primary" />
@@ -75,14 +75,17 @@ export function AppSidebar() {
         <SidebarMenu>
           {navItems.map((item) => (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href} legacyBehavior passHref>
+              <Link href={item.href} passHref>
                 <SidebarMenuButton
+                  asChild
                   isActive={pathname.startsWith(item.href)}
                   tooltip={item.label}
                   className="justify-start"
                 >
-                  <item.icon className="h-5 w-5" />
-                  <span>{item.label}</span>
+                  <a>
+                    <item.icon className="h-5 w-5" />
+                    <span>{item.label}</span>
+                  </a>
                 </SidebarMenuButton>
               </Link>
             </SidebarMenuItem>
