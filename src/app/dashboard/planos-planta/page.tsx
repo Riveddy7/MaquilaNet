@@ -160,10 +160,23 @@ export default function PlanosPlantaPage() {
         toast({ title: "Faltan Datos", description: "Por favor, selecciona un archivo PDF y asegúrate de haber iniciado sesión.", variant: "destructive" });
         return;
     }
+
+    const floorPlanId = uuidv4();
+    const storagePath = `floorPlans/${userProfile.organizationId}/${userProfile.id}/${floorPlanId}-${file.name}`;
+
+    console.log('Attempting to upload with:', {
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        userId: userProfile.id,
+        organizationId: userProfile.organizationId,
+        storagePath: storagePath,
+        floorPlanId: floorPlanId
+    });
+    
     setIsUploading(true);
     setUploadProgress(0);
-    const floorPlanId = uuidv4();
-    const storagePath = `floorPlans/${userProfile.organizationId}/${userProfile.id}/${floorPlanId}-${file.name}`; // Added userId for user-specific folder within org
+    
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file);
 
@@ -485,3 +498,5 @@ export default function PlanosPlantaPage() {
     </div>
   );
 }
+
+    
