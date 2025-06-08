@@ -1,4 +1,3 @@
-// src/app/(dashboard)/ubicaciones/components/location-form.tsx (Conceptual Refactor)
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -8,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -23,110 +21,76 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/contexts/auth-context';
-import { useRouter } from 'next/navigation'; // Or handle navigation via callback
 import { ubicacionSchema, UbicacionTipoEnum } from '@/lib/schemas';
-import { useEffect, useState } from 'react';
+import type { Ubicacion } from '@/types';
+import { useAuth } from '@/contexts/auth-context';
+import { db } from '@/lib/firebase/client';
+import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { useState } from 'react';
+import { DialogFooter, DialogClose } from '@/components/ui/dialog';
 
-// Type for the ubicacion data that the form handles and API returns
-interface AppUbicacion {
-  id: string;
-  nombre: string;
-  tipo: z.infer<typeof UbicacionTipoEnum>;
-  parentId?: string | null;
-  organizationId?: string; // May not be part of form, but part of AppUbicacion
-  // other fields if necessary
+
+type UbicacionFormValues = z.infer<typeof ubicacionSchema>;
+
+interface UbicacionFormProps {
+  ubicacion?: Ubicacion | null;
+  allUbicaciones: Ubicacion[]; // For parent selection
+  onSuccess: () => void;
 }
 
-type UbicacionFormData = z.infer<typeof ubicacionSchema>;
-
-interface LocationFormProps {
-  initialData?: AppUbicacion;
-  onSubmitSuccess?: (ubicacion: AppUbicacion) => void;
-  // We might also need a list of possible parent ubicaciones to select from
-  // parentUbicaciones?: { id: string; nombre: string }[];
-}
-
-export function LocationForm({ initialData, onSubmitSuccess }: LocationFormProps) {
+export function UbicacionForm({ ubicacion, allUbicaciones, onSuccess }: UbicacionFormProps) {
   const { toast } = useToast();
-  const { user } = useAuth();
-  const router = useRouter(); // Example for navigation
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { userProfile } = useAuth();
+  const [loading, setLoading] = useState(false);
 
-  const form = useForm<UbicacionFormData>({
+  const form = useForm<UbicacionFormValues>({
     resolver: zodResolver(ubicacionSchema),
     defaultValues: {
-      nombre: initialData?.nombre || '',
-      tipo: initialData?.tipo || undefined, // Ensure valid enum value or undefined
-      parentId: initialData?.parentId || null,
+      nombre: ubicacion?.nombre || '',
+      tipo: ubicacion?.tipo || UbicacionTipoEnum.Values.IDF,
+      parentId: ubicacion?.parentId || null,
     },
   });
 
-  useEffect(() => {
-    if (initialData) {
-      form.reset({
-        nombre: initialData.nombre,
-        tipo: initialData.tipo,
-        parentId: initialData.parentId || null,
-      });
-    }
-  }, [initialData, form]);
-
-
-  async function onSubmit(values: UbicacionFormData) {
-    if (!user) {
-      toast({ title: "Error", description: "Debes iniciar sesión.", variant: "destructive" });
+  const onSubmit = async (data: UbicacionFormValues) => {
+    if (!userProfile?.organizationId) {
+      toast({ title: "Error", description: "Usuario no autenticado o sin organización.", variant: "destructive" });
       return;
     }
-    setIsSubmitting(true);
+    setLoading(true);
     try {
-      const token = await user.getIdToken();
-      const method = initialData ? 'PUT' : 'POST';
-      const url = initialData ? `/api/ubicaciones/${initialData.id}` : '/api/ubicaciones';
-
-      const response = await fetch(url, {
-        method: method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(values),
-      });
-
-      const responseData = await response.json();
-
-      if (!response.ok) {
-        throw new Error(responseData.error || `Failed to ${initialData ? 'update' : 'create'} ubicacion`);
+      if (ubicacion) { // Editing existing ubicacion
+        const ubicacionRef = doc(db, 'ubicaciones', ubicacion.id);
+        await updateDoc(ubicacionRef, {
+          ...data,
+          parentId: data.parentId || null, // Ensure null if empty
+          updatedAt: serverTimestamp(),
+        });
+        toast({ title: "Éxito", description: "Ubicación actualizada correctamente." });
+      } else { // Creating new ubicacion
+        await addDoc(collection(db, 'ubicaciones'), {
+          ...data,
+          parentId: data.parentId || null, // Ensure null if empty
+          organizationId: userProfile.organizationId,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        toast({ title: "Éxito", description: "Ubicación creada correctamente." });
       }
-
-      toast({
-        title: `Ubicación ${initialData ? 'actualizada' : 'creada'}`,
-        description: `La ubicación "${responseData.nombre}" ha sido ${initialData ? 'actualizada' : 'creada'} exitosamente.`,
-      });
-
-      if (onSubmitSuccess) {
-        onSubmitSuccess(responseData as AppUbicacion);
-      } else {
-        // Default navigation if no callback
-        router.push('/dashboard/ubicaciones');
-        router.refresh(); // Important to see changes if list page doesn't auto-revalidate aggressively
-      }
-
+      onSuccess();
     } catch (error: any) {
-      console.error("Error submitting location form:", error);
-      toast({
-        title: "Error",
-        description: error.message || `No se pudo ${initialData ? 'actualizar' : 'crear'} la ubicación.`,
-        variant: "destructive",
-      });
+      console.error("Error saving ubicacion:", error);
+      toast({ title: "Error", description: error.message || "No se pudo guardar la ubicación.", variant: "destructive" });
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
-  }
+  };
+  
+  const parentOptions = allUbicaciones.filter(u => u.id !== ubicacion?.id); // Prevent self-parenting
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         <FormField
           control={form.control}
           name="nombre"
@@ -134,11 +98,8 @@ export function LocationForm({ initialData, onSubmitSuccess }: LocationFormProps
             <FormItem>
               <FormLabel>Nombre de la Ubicación</FormLabel>
               <FormControl>
-                <Input placeholder="Ej: Edificio Central - Rack A1" {...field} />
+                <Input placeholder="Ej: IDF Piso 1, Rack A03" {...field} />
               </FormControl>
-              <FormDescription>
-                El nombre descriptivo de la ubicación.
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -156,16 +117,11 @@ export function LocationForm({ initialData, onSubmitSuccess }: LocationFormProps
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  {UbicacionTipoEnum.options.map(option => (
-                    <SelectItem key={option} value={option}>
-                      {option}
-                    </SelectItem>
+                  {Object.values(UbicacionTipoEnum.Values).map((tipo) => (
+                    <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <FormDescription>
-                Clasifica el tipo de ubicación.
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -175,21 +131,39 @@ export function LocationForm({ initialData, onSubmitSuccess }: LocationFormProps
           name="parentId"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Ubicación Padre (Opcional)</FormLabel>
-              <FormControl>
-                {/* This should ideally be a Select populated with other ubicaciones from the API */}
-                <Input placeholder="ID de la ubicación padre (si aplica)" {...field} value={field.value ?? ''} />
-              </FormControl>
-              <FormDescription>
-                Si esta ubicación está dentro de otra (ej: un Rack dentro de un IDF).
-              </FormDescription>
+              <FormLabel>Ubicación Principal (Opcional)</FormLabel>
+              <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona ubicación principal (si aplica)" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  <SelectItem value="">Ninguna</SelectItem>
+                  {parentOptions.map((parent) => (
+                    <SelectItem key={parent.id} value={parent.id}>
+                      {parent.nombre} ({parent.tipo})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <FormMessage />
             </FormItem>
           )}
         />
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Guardando...' : (initialData ? 'Actualizar Ubicación' : 'Crear Ubicación')}
-        </Button>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline" disabled={loading}>
+              Cancelar
+            </Button>
+          </DialogClose>
+          <Button type="submit" disabled={loading} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+            {loading ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-foreground mr-2"></div>
+            ) : null}
+            {ubicacion ? 'Guardar Cambios' : 'Crear Ubicación'}
+          </Button>
+        </DialogFooter>
       </form>
     </Form>
   );
