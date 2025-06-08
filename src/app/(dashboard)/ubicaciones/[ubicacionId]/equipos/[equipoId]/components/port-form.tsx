@@ -1,5 +1,5 @@
-// port-form.tsx
 'use client';
+
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
@@ -7,13 +7,13 @@ import { Button } from '@/components/ui/button';
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -21,209 +21,209 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/contexts/auth-context';
 import { puertoSchema, PuertoTipoEnum, PuertoEstadoEnum } from '@/lib/schemas';
-import { useEffect, useState, useCallback } from 'react';
-import type { AppPuerto } from './port-list'; // Assuming AppPuerto is exported from port-list.tsx
-import type { AppNodo } from '@/app/(dashboard)/nodos/components/nodos-list'; // Assuming a similar type exists
+import type { Puerto, Nodo } from '@/types';
+import { useAuth } from '@/contexts/auth-context';
+import { db } from '@/lib/firebase/client';
+import { collection, addDoc, doc, updateDoc, serverTimestamp, getDocs, query, where } from 'firebase/firestore';
+import { useState } from 'react';
+import { DialogFooter, DialogClose } from '@/components/ui/dialog';
 
-type PuertoFormData = z.infer<typeof puertoSchema>;
+type PuertoFormValues = z.infer<typeof puertoSchema>;
 
-interface PortFormProps {
-  initialData?: AppPuerto;
+interface PuertoFormProps {
   equipoId: string;
-  onSubmitSuccess?: (puerto: AppPuerto) => void;
-  onCancel?: () => void;
-  // nodosList is fetched internally now
+  portNumber: number; // The physical port number on the equipment
+  puerto?: Puerto | null; // Existing Puerto data if editing
+  allNodos: Nodo[];
+  onSuccess: () => void;
 }
 
-export function PortForm({ initialData, equipoId, onSubmitSuccess, onCancel }: PortFormProps) {
+export function PortForm({ equipoId, portNumber, puerto, allNodos, onSuccess }: PuertoFormProps) {
   const { toast } = useToast();
-  const { user, userProfile } = useAuth();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [numeroPuertoField, setNumeroPuertoField] = useState<number | undefined>(initialData?.numeroPuerto);
-  const [availableNodos, setAvailableNodos] = useState<AppNodo[]>([]);
+  const { userProfile } = useAuth();
+  const [loading, setLoading] = useState(false);
 
-  const form = useForm<PuertoFormData>({
+  const form = useForm<PuertoFormValues>({
     resolver: zodResolver(puertoSchema),
     defaultValues: {
-      tipoPuerto: initialData?.tipoPuerto || undefined,
-      estado: initialData?.estado || PuertoEstadoEnum.Enum.Libre,
-      nodoId: initialData?.nodoId || null, // Ensure null for empty selection
-      vlanId: initialData?.vlanId || '',
-      descripcionConexion: initialData?.descripcionConexion || '',
+      tipoPuerto: puerto?.tipoPuerto || PuertoTipoEnum.Values.RJ45,
+      estado: puerto?.estado || PuertoEstadoEnum.Values.Libre,
+      nodoId: puerto?.nodoId || null,
+      vlanId: puerto?.vlanId || '',
+      descripcionConexion: puerto?.descripcionConexion || '',
     },
   });
 
-  const fetchNodos = useCallback(async () => {
-    if (!user || !userProfile?.organizationId) return;
-    try {
-      const token = await user.getIdToken();
-      // Assuming /api/nodos returns all nodos for the organization
-      const response = await fetch('/api/nodos', {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error((await response.json()).error || 'Failed to fetch nodos');
-      const nodosData: AppNodo[] = await response.json();
-      setAvailableNodos(nodosData);
-    } catch (error: any) {
-      toast({ title: "Error", description: `No se pudieron cargar los nodos: ${error.message}`, variant: "destructive" });
-    }
-  }, [user, userProfile?.organizationId, toast]);
-
-  useEffect(() => {
-    fetchNodos(); // Fetch available nodos when form mounts or user changes
-    if (initialData) {
-      form.reset({
-        tipoPuerto: initialData.tipoPuerto,
-        estado: initialData.estado,
-        nodoId: initialData.nodoId || null,
-        vlanId: initialData.vlanId || '',
-        descripcionConexion: initialData.descripcionConexion || '',
-      });
-      setNumeroPuertoField(initialData.numeroPuerto);
-    } else {
-      form.reset({
-        tipoPuerto: undefined,
-        estado: PuertoEstadoEnum.Enum.Libre,
-        nodoId: null,
-        vlanId: '',
-        descripcionConexion: '',
-      });
-      setNumeroPuertoField(undefined);
-    }
-  }, [initialData, form, fetchNodos]);
-
-
-  async function onSubmit(values: PuertoFormData) {
-    if (!user) { toast({ title: "Error", description: "Debes iniciar sesión.", variant: "destructive" }); return; }
-
-    if (!initialData && (numeroPuertoField === undefined || numeroPuertoField < 0)) {
-      form.setError("numeroPuerto", { type: "manual", message: "Número de puerto es requerido y debe ser positivo." });
-      // toast({ title: "Error de validación", description: "Número de puerto es requerido y debe ser positivo.", variant: "destructive" });
+  const onSubmit = async (data: PuertoFormValues) => {
+    if (!userProfile?.organizationId || !equipoId) {
+      toast({ title: "Error", description: "Datos de sesión o equipo inválidos.", variant: "destructive" });
       return;
     }
-    setIsSubmitting(true);
+    setLoading(true);
 
-    const method = initialData ? 'PUT' : 'POST';
-    const url = initialData ? `/api/puertos/${initialData.id}` : '/api/puertos';
-
-    let payload: any = { ...values };
-    if (!initialData) { // Create mode
-      payload.equipoId = equipoId;
-      payload.numeroPuerto = numeroPuertoField;
-    }
-    // For PUT, API expects all fields from puertoSchema. `equipoId` and `numeroPuerto` are not part of the PUT body.
+    const puertoData = {
+      ...data,
+      equipoId: equipoId,
+      numeroPuerto: portNumber, // Use the passed portNumber
+      organizationId: userProfile.organizationId,
+      updatedAt: serverTimestamp(),
+    };
 
     try {
-      const token = await user.getIdToken();
-      const response = await fetch(url, {
-        method: method,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.error || 'Operation failed');
-
-      toast({ title: `Puerto ${initialData ? 'actualizado' : 'creado'}`, description: `El puerto #${initialData ? initialData.numeroPuerto : numeroPuertoField} ha sido ${initialData ? 'actualizado' : 'creado'} correctamente.` });
-      if (onSubmitSuccess) onSubmitSuccess(responseData as AppPuerto);
+      if (puerto) { // Editing existing puerto record
+        const puertoRef = doc(db, 'puertos', puerto.id);
+        await updateDoc(puertoRef, puertoData);
+        toast({ title: "Éxito", description: `Puerto ${portNumber} actualizado.` });
+      } else { // Creating new puerto record for this physical port
+        // Check if a record for this port number already exists to avoid duplicates (should be handled by UI logic ideally)
+        const q = query(collection(db, 'puertos'), 
+            where('equipoId', '==', equipoId), 
+            where('numeroPuerto', '==', portNumber),
+            where('organizationId', '==', userProfile.organizationId)
+        );
+        const existingDocs = await getDocs(q);
+        if (!existingDocs.empty) {
+            // Update the first found existing document
+            const existingDocId = existingDocs.docs[0].id;
+            await updateDoc(doc(db, 'puertos', existingDocId), puertoData);
+            toast({ title: "Éxito", description: `Puerto ${portNumber} configurado (registro existente actualizado).` });
+        } else {
+            await addDoc(collection(db, 'puertos'), puertoData);
+            toast({ title: "Éxito", description: `Puerto ${portNumber} configurado.` });
+        }
+      }
+      onSuccess();
     } catch (error: any) {
-      console.error(`Error ${initialData ? 'updating' : 'creating'} port:`, error)
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      console.error("Error saving puerto:", error);
+      toast({ title: "Error", description: error.message || `No se pudo guardar el puerto ${portNumber}.`, variant: "destructive" });
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 p-1">
-        {initialData ? (
-            <FormItem>
-                <FormLabel>Número de Puerto</FormLabel>
-                <Input type="number" value={initialData.numeroPuerto} disabled className="bg-muted" />
-                <FormDescription>El número de puerto no se puede cambiar una vez creado.</FormDescription>
-            </FormItem>
-        ) : (
-          <FormField
-            // This is not part of Zod schema, so direct control
-            name="numeroPuerto" // Not used by react-hook-form directly here
-            render={({ fieldState }) => ( // Use fieldState for error display if needed
-              <FormItem>
-                <FormLabel>Número de Puerto</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    placeholder="Ej: 1"
-                    value={numeroPuertoField === undefined ? '' : numeroPuertoField}
-                    onChange={(e) => setNumeroPuertoField(e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-                    min="0"
-                  />
-                </FormControl>
-                {form.formState.errors.numeroPuerto && <FormMessage>{form.formState.errors.numeroPuerto.message}</FormMessage>}
-                {!form.formState.errors.numeroPuerto && <FormDescription>Número físico del puerto en el equipo.</FormDescription>}
-              </FormItem>
-            )}
-          />
-        )}
-
-        <FormField control={form.control} name="tipoPuerto" render={({ field }) => (
-            <FormItem>
-                <FormLabel>Tipo de Puerto</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="Selecciona un tipo" /></SelectTrigger></FormControl>
-                    <SelectContent>{PuertoTipoEnum.options.map(o=><SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
-                </Select>
-                <FormMessage />
-            </FormItem>
-        )} />
-        <FormField control={form.control} name="estado" render={({ field }) => (
-            <FormItem>
-                <FormLabel>Estado del Puerto</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="Selecciona un estado" /></SelectTrigger></FormControl>
-                    <SelectContent>{PuertoEstadoEnum.options.map(o=><SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
-                </Select>
-                <FormMessage />
-            </FormItem>
-        )} />
-        <FormField control={form.control} name="nodoId" render={({ field }) => (
-            <FormItem>
-                <FormLabel>Nodo Conectado (Opcional)</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value ?? undefined} value={field.value ?? undefined}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="Ninguno (o selecciona un nodo)" /></SelectTrigger></FormControl>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField
+                control={form.control}
+                name="estado"
+                render={({ field }) => (
+                <FormItem>
+                    <FormLabel>Estado del Puerto</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                        <SelectTrigger>
+                        <SelectValue placeholder="Selecciona un estado" />
+                        </SelectTrigger>
+                    </FormControl>
                     <SelectContent>
-                        <SelectItem value="null">Ninguno</SelectItem> {/* Allow unsetting */}
-                        {availableNodos.map(nodo => (
-                            <SelectItem key={nodo.id} value={nodo.id}>{nodo.nombreHost} ({nodo.ipAsignada || 'No IP'})</SelectItem>
+                        {Object.values(PuertoEstadoEnum.Values).map((estado) => (
+                        <SelectItem key={estado} value={estado}>{estado}</SelectItem>
                         ))}
                     </SelectContent>
-                </Select>
-                <FormDescription>Dispositivo final conectado a este puerto, si aplica.</FormDescription>
-                <FormMessage />
-            </FormItem>
-        )} />
-        <FormField control={form.control} name="vlanId" render={({ field }) => (
-            <FormItem>
-                <FormLabel>VLAN ID (Opcional)</FormLabel>
-                <FormControl><Input placeholder="Ej: 100, 200-205" {...field} value={field.value ?? ''} /></FormControl>
-                <FormDescription>Identificador de VLAN para este puerto.</FormDescription>
-                <FormMessage />
-            </FormItem>
-        )} />
-        <FormField control={form.control} name="descripcionConexion" render={({ field }) => (
-            <FormItem>
-                <FormLabel>Descripción de Conexión (Opcional)</FormLabel>
-                <FormControl><Textarea placeholder="Detalles de la conexión, ej: Patch Panel A3, P24 -> User Desk 101" {...field} value={field.value ?? ''} /></FormControl>
-                <FormMessage />
-            </FormItem>
-        )} />
-        <div className="flex justify-end space-x-2 pt-4">
-            {onCancel && <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>Cancelar</Button>}
-            <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Guardando...' : (initialData ? 'Actualizar Puerto' : 'Crear Puerto')}</Button>
+                    </Select>
+                    <FormMessage />
+                </FormItem>
+                )}
+            />
+            <FormField
+                control={form.control}
+                name="tipoPuerto"
+                render={({ field }) => (
+                <FormItem>
+                    <FormLabel>Tipo de Puerto</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                        <SelectTrigger>
+                        <SelectValue placeholder="Selecciona un tipo" />
+                        </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                        {Object.values(PuertoTipoEnum.Values).map((tipo) => (
+                        <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>
+                        ))}
+                    </SelectContent>
+                    </Select>
+                    <FormMessage />
+                </FormItem>
+                )}
+            />
         </div>
+        
+        <FormField
+          control={form.control}
+          name="nodoId"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Nodo Conectado (Opcional)</FormLabel>
+              <Select onValueChange={field.onChange} defaultValue={field.value || ""}>
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona un nodo si está ocupado" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  <SelectItem value="">Ninguno</SelectItem>
+                  {allNodos.map((nodo) => (
+                    <SelectItem key={nodo.id} value={nodo.id}>
+                      {nodo.nombreHost} ({nodo.tipoDispositivo})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+            control={form.control}
+            name="vlanId"
+            render={({ field }) => (
+                <FormItem>
+                <FormLabel>VLAN ID (Opcional)</FormLabel>
+                <FormControl>
+                    <Input placeholder="Ej: 10, 20-25, Marketing" {...field} />
+                </FormControl>
+                <FormMessage />
+                </FormItem>
+            )}
+        />
+
+        <FormField
+          control={form.control}
+          name="descripcionConexion"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Descripción de Conexión (Opcional)</FormLabel>
+              <FormControl>
+                <Textarea
+                  placeholder="Ej: Conectado a PC de Juan Perez en Oficina 101, Patch Panel A Fila 3 Puerto 5"
+                  className="resize-none"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <DialogFooter className="pt-4">
+          <DialogClose asChild>
+            <Button type="button" variant="outline" disabled={loading}>
+              Cancelar
+            </Button>
+          </DialogClose>
+          <Button type="submit" disabled={loading} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+            {loading ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-foreground mr-2"></div>
+            ) : null}
+            Guardar Cambios
+          </Button>
+        </DialogFooter>
       </form>
     </Form>
   );
