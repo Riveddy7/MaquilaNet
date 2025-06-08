@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -17,7 +17,7 @@ import { db } from '@/lib/firebase/client';
 import { collection, query, where, onSnapshot, doc, getDoc, orderBy } from 'firebase/firestore';
 import type { Puerto, Nodo } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { PortForm } from './port-form'; // To be created
+import { PortForm } from './port-form';
 import {
   Dialog,
   DialogContent,
@@ -36,7 +36,7 @@ interface PuertoExtendido extends Puerto {
 }
 
 export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
-  const [puertos, setPuertos] = useState<PuertoExtendido[]>([]);
+  const [puertosData, setPuertosData] = useState<Map<number, PuertoExtendido>>(new Map());
   const [nodosMap, setNodosMap] = useState<Map<string, Nodo>>(new Map());
   const [loading, setLoading] = useState(true);
   const { userProfile } = useAuth();
@@ -50,7 +50,6 @@ export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
     if (!userProfile?.organizationId || !equipoId) return;
     setLoading(true);
 
-    // Fetch Nodos to map nodoId to nombreHost
     const nodosQuery = query(
         collection(db, 'nodos'),
         where('organizationId', '==', userProfile.organizationId)
@@ -61,24 +60,23 @@ export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
         setNodosMap(newNodosMap);
     });
 
-
     const q = query(
       collection(db, 'puertos'),
       where('organizationId', '==', userProfile.organizationId),
       where('equipoId', '==', equipoId),
-      orderBy('numeroPuerto')
+      orderBy('numeroPuerto') // Firestore order might not be strictly necessary if we map by numeroPuerto
     );
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const data: PuertoExtendido[] = [];
+    const unsubscribePorts = onSnapshot(q, (querySnapshot) => {
+      const newPuertosData = new Map<number, PuertoExtendido>();
       querySnapshot.forEach((doc) => {
         const puertoData = { id: doc.id, ...doc.data() } as Puerto;
-        data.push({
+        newPuertosData.set(puertoData.numeroPuerto, {
             ...puertoData,
             nodoNombreHost: puertoData.nodoId ? nodosMap.get(puertoData.nodoId)?.nombreHost : undefined
         });
       });
-      setPuertos(data);
+      setPuertosData(newPuertosData);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching ports:", error);
@@ -87,22 +85,18 @@ export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
     });
 
     return () => {
-        unsubscribe();
+        unsubscribePorts();
         unsubNodos();
     };
-  }, [equipoId, userProfile?.organizationId, toast, nodosMap]); // nodosMap added to re-run if it changes
+  }, [equipoId, userProfile?.organizationId, toast, nodosMap]); // Added nodosMap dependency
 
-  const handleEdit = (puerto?: PuertoExtendido, portNumber?: number) => {
-    if (puerto) {
-        setEditingPuerto(puerto);
-        setSelectedPortNumber(puerto.numeroPuerto);
-    } else if (portNumber !== undefined) {
-        // Creating a new port record for a physical port that doesn't have one yet
-        setEditingPuerto(null);
-        setSelectedPortNumber(portNumber);
-    }
+  const handleEdit = (portNumber: number) => {
+    const puertoExistente = puertosData.get(portNumber);
+    setEditingPuerto(puertoExistente || null);
+    setSelectedPortNumber(portNumber);
     setIsFormOpen(true);
   };
+
 
   const getPortStatusIcon = (estado: Puerto['estado']) => {
     switch (estado) {
@@ -113,11 +107,16 @@ export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
       default: return <Slash className="h-4 w-4 text-gray-400" />;
     }
   };
+  
+  const allNodosArray = useMemo(() => Array.from(nodosMap.values()), [nodosMap]);
+
 
   const renderPorts = () => {
     const portElements = [];
     for (let i = 1; i <= numeroDePuertos; i++) {
-      const puertoData = puertos.find(p => p.numeroPuerto === i);
+      const puertoData = puertosData.get(i);
+      const nodoNombre = puertoData?.nodoId ? nodosMap.get(puertoData.nodoId)?.nombreHost : undefined;
+
       portElements.push(
         <TableRow key={i}>
           <TableCell className="font-mono">{i}</TableCell>
@@ -143,17 +142,17 @@ export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
           </TableCell>
           <TableCell>{puertoData?.tipoPuerto || 'N/A'}</TableCell>
           <TableCell>
-            {puertoData?.nodoId && (puertos.find(p => p.id === puertoData.id)?.nodoNombreHost || puertoData.nodoId) ? (
+            {puertoData?.nodoId && (nodoNombre || puertoData.nodoId) ? (
                  <span className="flex items-center">
                     <Link2 className="h-3 w-3 mr-1 text-muted-foreground"/> 
-                    {puertos.find(p => p.id === puertoData.id)?.nodoNombreHost || puertoData.nodoId}
+                    {nodoNombre || puertoData.nodoId}
                  </span>
             ) : '-'}
           </TableCell>
           <TableCell className="truncate max-w-xs">{puertoData?.descripcionConexion || '-'}</TableCell>
           <TableCell className="text-right">
             <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={() => handleEdit(puertoData, i)}>
+                <Button variant="ghost" size="icon" onClick={() => handleEdit(i)}>
                     <Edit3 className="h-4 w-4" />
                 </Button>
             </DialogTrigger>
@@ -205,8 +204,8 @@ export function PortList({ equipoId, numeroDePuertos }: PortListProps) {
             <PortForm
                 equipoId={equipoId}
                 puerto={editingPuerto}
-                portNumber={selectedPortNumber} // Pass the selected port number
-                allNodos={Array.from(nodosMap.values())}
+                portNumber={selectedPortNumber}
+                allNodos={allNodosArray}
                 onSuccess={() => {
                     setIsFormOpen(false);
                     setEditingPuerto(null);

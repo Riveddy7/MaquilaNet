@@ -33,7 +33,7 @@ import { DialogFooter, DialogClose } from '@/components/ui/dialog';
 type EquipoFormValues = z.infer<typeof equipoSchema>;
 
 interface EquipoFormProps {
-  ubicacionId: string;
+  ubicacionId: string; // This is the IDF/MDF ID
   equipo?: Equipo | null;
   onSuccess: () => void;
 }
@@ -54,7 +54,7 @@ export function EquipoForm({ ubicacionId, equipo, onSuccess }: EquipoFormProps) 
       assetTag: equipo?.assetTag || '',
       ipGestion: equipo?.ipGestion || '',
       rfidTagId: equipo?.rfidTagId || '',
-      rackPositionU: equipo?.rackPositionU || undefined,
+      rackPositionU: equipo?.rackPositionU === null ? undefined : equipo?.rackPositionU, // Handle null from Firestore
       estado: equipo?.estado || EquipoEstadoEnum.Values.Activo,
       numeroDePuertos: equipo?.numeroDePuertos || 0,
     },
@@ -69,7 +69,7 @@ export function EquipoForm({ ubicacionId, equipo, onSuccess }: EquipoFormProps) 
 
     const equipoData = {
       ...data,
-      rackPositionU: data.rackPositionU ? Number(data.rackPositionU) : null,
+      rackPositionU: data.rackPositionU ? Number(data.rackPositionU) : null, // Store as number or null
       numeroDePuertos: Number(data.numeroDePuertos),
     };
 
@@ -84,7 +84,7 @@ export function EquipoForm({ ubicacionId, equipo, onSuccess }: EquipoFormProps) 
       } else { // Creating new equipo
         await addDoc(collection(db, 'equipos'), {
           ...equipoData,
-          ubicacionId: ubicacionId,
+          ubicacionId: ubicacionId, // IDF/MDF ID
           organizationId: userProfile.organizationId,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -236,7 +236,9 @@ export function EquipoForm({ ubicacionId, equipo, onSuccess }: EquipoFormProps) 
               <FormItem>
                 <FormLabel>Posición en Rack (U) (Opcional)</FormLabel>
                 <FormControl>
-                  <Input type="number" placeholder="Ej: 23" {...field} onChange={e => field.onChange(parseInt(e.target.value))} />
+                  <Input type="number" placeholder="Ej: 23" {...field} 
+                  value={field.value === null ? '' : field.value} // Handle null for input display
+                  onChange={e => field.onChange(e.target.value === '' ? null : parseInt(e.target.value))} />
                 </FormControl>
                 <FormMessage />
               </FormItem>

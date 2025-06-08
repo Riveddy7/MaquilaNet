@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link'; // Corrected import
-import { PlusCircle, Edit, Trash2, Cpu, Search, ArrowLeft, SlidersHorizontal } from 'lucide-react';
+import Link from 'next/link';
+import { PlusCircle, Edit, Trash2, Cpu, Search, ArrowLeft, SlidersHorizontal, Network } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -31,7 +31,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EquipoForm } from './components/equipment-form';
 import { useAuth } from '@/contexts/auth-context';
-import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc, getDoc, getCountFromServer } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { Equipo, Ubicacion } from '@/types';
 import { format } from 'date-fns';
@@ -48,13 +48,19 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-export default function EquiposPage() {
+interface EquipoExtendido extends Equipo {
+  connectedNodosCount?: number | null;
+}
+
+
+export default function EquiposEnUbicacionPage() {
   const params = useParams();
   const router = useRouter();
-  const ubicacionId = params.ubicacionId as string;
+  const ubicacionId = params.ubicacionId as string; // This is IDF/MDF ID
 
   const [ubicacion, setUbicacion] = useState<Ubicacion | null>(null);
-  const [equipos, setEquipos] = useState<Equipo[]>([]);
+  const [planta, setPlanta] = useState<Ubicacion | null>(null);
+  const [equipos, setEquipos] = useState<EquipoExtendido[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingEquipo, setEditingEquipo] = useState<Equipo | null>(null);
@@ -66,31 +72,44 @@ export default function EquiposPage() {
     if (!userProfile?.organizationId || !ubicacionId) return;
 
     setLoading(true);
-    // Fetch current ubicacion details
+    // Fetch current ubicacion (IDF/MDF) details
     const ubicacionDocRef = doc(db, 'ubicaciones', ubicacionId);
-    const unsubUbicacion = onSnapshot(ubicacionDocRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().organizationId === userProfile.organizationId) {
-        setUbicacion({ id: docSnap.id, ...docSnap.data() } as Ubicacion);
+    const unsubUbicacion = onSnapshot(ubicacionDocRef, async (docSnap) => {
+      if (docSnap.exists() && docSnap.data().organizationId === userProfile.organizationId && (docSnap.data().tipo === 'IDF' || docSnap.data().tipo === 'MDF') ) {
+        const currentUbicacion = { id: docSnap.id, ...docSnap.data() } as Ubicacion;
+        setUbicacion(currentUbicacion);
+        // Fetch Planta if IDF/MDF has parentId
+        if (currentUbicacion.parentId) {
+            const plantaDocRef = doc(db, 'ubicaciones', currentUbicacion.parentId);
+            const plantaSnap = await getDoc(plantaDocRef);
+            if (plantaSnap.exists()) {
+                setPlanta({ id: plantaSnap.id, ...plantaSnap.data()} as Ubicacion);
+            }
+        }
       } else {
-        toast({ title: "Error", description: "Ubicación no encontrada o no tienes acceso.", variant: "destructive" });
-        router.push('/dashboard/ubicaciones');
+        toast({ title: "Error", description: "Ubicación (IDF/MDF) no encontrada o no tienes acceso.", variant: "destructive" });
+        router.push('/dashboard/ubicaciones'); // Redirect to plantas list
       }
     });
 
-    // Fetch equipos for this ubicacion
+    // Fetch equipos for this ubicacion (IDF/MDF)
     const q = query(
       collection(db, 'equipos'),
       where('organizationId', '==', userProfile.organizationId),
-      where('ubicacionId', '==', ubicacionId),
+      where('ubicacionId', '==', ubicacionId), // equipos directly under this IDF/MDF
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribeEquipos = onSnapshot(q, (querySnapshot) => {
-      const data: Equipo[] = [];
-      querySnapshot.forEach((doc) => {
-        data.push({ id: doc.id, ...doc.data() } as Equipo);
+    const unsubscribeEquipos = onSnapshot(q, async (querySnapshot) => {
+      const dataPromises = querySnapshot.docs.map(async (doc) => {
+        const equipoData = { id: doc.id, ...doc.data() } as Equipo;
+        // Count connected nodos for this equipo
+        const puertosQuery = query(collection(db, 'puertos'), where('equipoId', '==', equipoData.id), where('estado', '==', 'Ocupado'), where('nodoId', '!=', null));
+        const puertosSnap = await getCountFromServer(puertosQuery);
+        return { ...equipoData, connectedNodosCount: puertosSnap.data().count };
       });
-      setEquipos(data);
+      const resolvedData = await Promise.all(dataPromises);
+      setEquipos(resolvedData);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching equipos:", error);
@@ -134,11 +153,14 @@ export default function EquiposPage() {
     (e.serialNumber && e.serialNumber.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
+  const pageTitle = ubicacion ? `Equipos en ${ubicacion.nombre}` : 'Cargando Equipos...';
+  const pageDescription = planta ? `Perteneciente a la planta ${planta.nombre}.` : `Administra los equipos de red instalados en este ${ubicacion?.tipo}.`;
+
   return (
     <div className="container mx-auto py-8">
       <Button variant="outline" size="sm" className="mb-6" asChild>
-        <Link href={`/dashboard/ubicaciones/${ubicacionId}`}>
-          <ArrowLeft className="mr-2 h-4 w-4" /> Volver a {ubicacion?.nombre || 'Ubicación'}
+        <Link href={`/dashboard/ubicaciones/${planta?.id || ubicacion?.parentId || ''}`}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Volver a {planta?.nombre || ubicacion?.parentId || 'Planta'}
         </Link>
       </Button>
 
@@ -149,14 +171,14 @@ export default function EquiposPage() {
               <div>
                 <CardTitle className="flex items-center font-headline">
                   <Cpu className="mr-2 h-6 w-6 text-primary" />
-                  Equipos en {ubicacion?.nombre || 'Cargando...'}
+                  {pageTitle}
                 </CardTitle>
                 <CardDescription>
-                  Administra los equipos de red instalados en esta ubicación.
+                  {pageDescription}
                 </CardDescription>
               </div>
               <DialogTrigger asChild>
-                <Button onClick={handleAdd} disabled={!ubicacion}>
+                <Button onClick={handleAdd} disabled={!ubicacion} className="bg-primary hover:bg-primary/90 text-primary-foreground">
                   <PlusCircle className="mr-2 h-4 w-4" /> Nuevo Equipo
                 </Button>
               </DialogTrigger>
@@ -172,7 +194,6 @@ export default function EquiposPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              {/* <Button variant="outline"><SlidersHorizontal className="mr-2 h-4 w-4" /> Filtros</Button> */}
             </div>
           </CardHeader>
           <CardContent>
@@ -185,11 +206,11 @@ export default function EquiposPage() {
                   <Cpu className="mx-auto h-12 w-12 text-muted-foreground" />
                   <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron equipos</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                     {searchTerm ? "Intenta con otra búsqueda." : `No hay equipos registrados en "${ubicacion?.nombre || 'esta ubicación'}".`}
+                     {searchTerm ? "Intenta con otra búsqueda." : `No hay equipos registrados en "${ubicacion?.nombre || 'este IDF/MDF'}".`}
                   </p>
                    {!searchTerm && ubicacion && (
                     <DialogTrigger asChild>
-                      <Button className="mt-4" onClick={handleAdd}>
+                      <Button className="mt-4 bg-primary hover:bg-primary/90 text-primary-foreground" onClick={handleAdd}>
                         <PlusCircle className="mr-2 h-4 w-4" /> Crear Equipo
                       </Button>
                     </DialogTrigger>
@@ -202,9 +223,8 @@ export default function EquiposPage() {
                     <TableRow>
                       <TableHead>Nombre</TableHead>
                       <TableHead>Tipo</TableHead>
-                      <TableHead>Marca/Modelo</TableHead>
                       <TableHead>S/N</TableHead>
-                      <TableHead>IP Gestión</TableHead>
+                      <TableHead><Network className="inline h-4 w-4 mr-1"/>Nodos/Puertos</TableHead>
                       <TableHead>Estado</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
@@ -216,11 +236,13 @@ export default function EquiposPage() {
                           <Link href={`/dashboard/ubicaciones/${ubicacionId}/equipos/${equipo.id}`} className="hover:underline text-primary">
                             {equipo.nombre}
                           </Link>
+                          <div className="text-xs text-muted-foreground">{equipo.marca || ''} {equipo.modelo || ''}</div>
                         </TableCell>
                         <TableCell><Badge variant="outline">{equipo.tipo}</Badge></TableCell>
-                        <TableCell>{equipo.marca || '-'} / {equipo.modelo || '-'}</TableCell>
                         <TableCell>{equipo.serialNumber || '-'}</TableCell>
-                        <TableCell>{equipo.ipGestion || '-'}</TableCell>
+                        <TableCell>
+                          {equipo.connectedNodosCount === null ? '...' : equipo.connectedNodosCount} / {equipo.numeroDePuertos}
+                        </TableCell>
                         <TableCell>
                           <Badge 
                             variant={equipo.estado === 'Activo' ? 'default' : equipo.estado === 'Inactivo' ? 'destructive' : 'secondary'}
@@ -269,13 +291,13 @@ export default function EquiposPage() {
           </CardContent>
         </Card>
 
-        <DialogContent className="sm:max-w-2xl"> {/* Wider dialog for more fields */}
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle className="font-headline">
-              {editingEquipo ? 'Editar Equipo' : 'Nuevo Equipo'}
+              {editingEquipo ? 'Editar Equipo' : `Nuevo Equipo en ${ubicacion?.nombre || 'IDF/MDF'}`}
             </DialogTitle>
           </DialogHeader>
-          {ubicacionId && (
+          {ubicacionId && ( // Ensure ubicacionId (IDF/MDF ID) is available
             <EquipoForm
               ubicacionId={ubicacionId}
               equipo={editingEquipo}

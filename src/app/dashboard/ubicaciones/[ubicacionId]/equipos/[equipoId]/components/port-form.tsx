@@ -92,7 +92,7 @@ export function PortForm({ equipoId, portNumber, puerto, allNodos, onSuccess }: 
             await updateDoc(doc(db, 'puertos', existingDocId), puertoData);
             toast({ title: "Éxito", description: `Puerto ${portNumber} configurado (registro existente actualizado).` });
         } else {
-            await addDoc(collection(db, 'puertos'), puertoData);
+            await addDoc(collection(db, 'puertos'), { ...puertoData, createdAt: serverTimestamp() });
             toast({ title: "Éxito", description: `Puerto ${portNumber} configurado.` });
         }
       }

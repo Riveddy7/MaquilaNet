@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { PlusCircle, Edit, Trash2, MapPin, Search } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, MapPin, Search, Building } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -24,15 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  DialogFooter,
-  DialogClose
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
-import { UbicacionForm } from './components/location-form'; // To be created
+import { UbicacionForm } from './components/location-form';
 import { useAuth } from '@/contexts/auth-context';
-import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { Ubicacion } from '@/types';
 import { format } from 'date-fns';
@@ -50,10 +48,10 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function UbicacionesPage() {
-  const [ubicaciones, setUbicaciones] = useState<Ubicacion[]>([]);
+  const [plantas, setPlantas] = useState<Ubicacion[]>([]); // Only Plantas here
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingUbicacion, setEditingUbicacion] = useState<Ubicacion | null>(null);
+  const [editingUbicacion, setEditingUbicacion] = useState<Ubicacion | null>(null); // For editing a Planta or creating a new one
   const [searchTerm, setSearchTerm] = useState('');
   const { userProfile } = useAuth();
   const { toast } = useToast();
@@ -62,9 +60,11 @@ export default function UbicacionesPage() {
     if (!userProfile?.organizationId) return;
 
     setLoading(true);
+    // Query for Plantas only
     const q = query(
       collection(db, 'ubicaciones'),
       where('organizationId', '==', userProfile.organizationId),
+      where('tipo', '==', 'Planta'), 
       orderBy('createdAt', 'desc')
     );
 
@@ -73,42 +73,49 @@ export default function UbicacionesPage() {
       querySnapshot.forEach((doc) => {
         data.push({ id: doc.id, ...doc.data() } as Ubicacion);
       });
-      setUbicaciones(data);
+      setPlantas(data);
       setLoading(false);
     }, (error) => {
-      console.error("Error fetching ubicaciones:", error);
-      toast({ title: "Error", description: "No se pudieron cargar las ubicaciones.", variant: "destructive"});
+      console.error("Error fetching plantas:", error);
+      toast({ title: "Error", description: "No se pudieron cargar las plantas.", variant: "destructive"});
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, [userProfile?.organizationId, toast]);
 
-  const handleAdd = () => {
-    setEditingUbicacion(null);
+  const handleAddPlanta = () => {
+    setEditingUbicacion(null); // For creating a new Planta
     setIsFormOpen(true);
   };
 
-  const handleEdit = (ubicacion: Ubicacion) => {
-    setEditingUbicacion(ubicacion);
+  const handleEditPlanta = (planta: Ubicacion) => {
+    setEditingUbicacion(planta);
     setIsFormOpen(true);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDeletePlanta = async (plantaId: string) => {
     if (!userProfile?.organizationId) return;
+    
+    // Check for child IDF/MDFs
+    const childrenQuery = query(collection(db, 'ubicaciones'), where('parentId', '==', plantaId));
+    const childrenSnap = await getDocs(childrenQuery);
+    if (!childrenSnap.empty) {
+      toast({ title: "Error", description: "No se puede eliminar la planta. Primero elimine los IDF/MDFs asociados.", variant: "destructive"});
+      return;
+    }
+
     try {
-      // TODO: Check for child ubicaciones or associated equipos before deleting
-      await deleteDoc(doc(db, 'ubicaciones', id));
-      toast({ title: "Ubicación eliminada", description: "La ubicación ha sido eliminada correctamente."});
+      await deleteDoc(doc(db, 'ubicaciones', plantaId));
+      toast({ title: "Planta eliminada", description: "La planta ha sido eliminada correctamente."});
     } catch (error) {
-      console.error("Error deleting ubicacion: ", error);
-      toast({ title: "Error", description: "No se pudo eliminar la ubicación.", variant: "destructive"});
+      console.error("Error deleting planta: ", error);
+      toast({ title: "Error", description: "No se pudo eliminar la planta.", variant: "destructive"});
     }
   };
   
-  const filteredUbicaciones = ubicaciones.filter(u => 
-    u.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    u.tipo.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredPlantas = plantas.filter(p => 
+    p.nombre.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -119,16 +126,16 @@ export default function UbicacionesPage() {
             <div className="flex justify-between items-center">
               <div>
                 <CardTitle className="flex items-center font-headline">
-                  <MapPin className="mr-2 h-6 w-6 text-primary" />
-                  Gestión de Ubicaciones
+                  <Building className="mr-2 h-6 w-6 text-primary" />
+                  Gestión de Plantas
                 </CardTitle>
                 <CardDescription>
-                  Visualiza, crea y administra tus IDFs, MDFs, Racks y otras ubicaciones.
+                  Visualiza, crea y administra tus plantas de producción.
                 </CardDescription>
               </div>
               <DialogTrigger asChild>
-                <Button onClick={handleAdd}>
-                  <PlusCircle className="mr-2 h-4 w-4" /> Nueva Ubicación
+                <Button onClick={handleAddPlanta} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+                  <PlusCircle className="mr-2 h-4 w-4" /> Nueva Planta
                 </Button>
               </DialogTrigger>
             </div>
@@ -137,7 +144,7 @@ export default function UbicacionesPage() {
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input 
                   type="search"
-                  placeholder="Buscar por nombre o tipo..."
+                  placeholder="Buscar por nombre de planta..."
                   className="pl-8 w-full sm:w-1/3"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
@@ -150,17 +157,17 @@ export default function UbicacionesPage() {
               <div className="flex justify-center items-center h-64">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
               </div>
-            ) : filteredUbicaciones.length === 0 ? (
+            ) : filteredPlantas.length === 0 ? (
                 <div className="text-center py-10">
-                  <MapPin className="mx-auto h-12 w-12 text-muted-foreground" />
-                  <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron ubicaciones</h3>
+                  <Building className="mx-auto h-12 w-12 text-muted-foreground" />
+                  <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron plantas</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {searchTerm ? "Intenta con otra búsqueda." : "Crea una nueva ubicación para empezar."}
+                    {searchTerm ? "Intenta con otra búsqueda." : "Crea una nueva planta para empezar."}
                   </p>
                    {!searchTerm && (
                     <DialogTrigger asChild>
-                      <Button className="mt-4" onClick={handleAdd}>
-                        <PlusCircle className="mr-2 h-4 w-4" /> Crear Ubicación
+                      <Button className="mt-4 bg-primary hover:bg-primary/90 text-primary-foreground" onClick={handleAddPlanta}>
+                        <PlusCircle className="mr-2 h-4 w-4" /> Crear Planta
                       </Button>
                     </DialogTrigger>
                    )}
@@ -170,33 +177,27 @@ export default function UbicacionesPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Nombre</TableHead>
+                      <TableHead>Nombre Planta</TableHead>
                       <TableHead>Tipo</TableHead>
-                      <TableHead>Principal (Parent)</TableHead>
                       <TableHead>Creado</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredUbicaciones.map((ubicacion) => (
-                      <TableRow key={ubicacion.id}>
+                    {filteredPlantas.map((planta) => (
+                      <TableRow key={planta.id}>
                         <TableCell className="font-medium">
-                          <Link href={`/dashboard/ubicaciones/${ubicacion.id}`} className="hover:underline text-primary">
-                            {ubicacion.nombre}
+                          <Link href={`/dashboard/ubicaciones/${planta.id}`} className="hover:underline text-primary">
+                            {planta.nombre}
                           </Link>
                         </TableCell>
-                        <TableCell><Badge variant="secondary">{ubicacion.tipo}</Badge></TableCell>
+                        <TableCell><Badge variant="secondary">{planta.tipo}</Badge></TableCell>
                         <TableCell>
-                          {ubicacion.parentId ? 
-                            (ubicaciones.find(u => u.id === ubicacion.parentId)?.nombre || 'N/A') : 
-                            '-'}
-                        </TableCell>
-                        <TableCell>
-                          {ubicacion.createdAt ? format(ubicacion.createdAt.toDate(), 'dd/MM/yyyy HH:mm') : 'N/A'}
+                          {planta.createdAt ? format(planta.createdAt.toDate(), 'dd/MM/yyyy HH:mm') : 'N/A'}
                         </TableCell>
                         <TableCell className="text-right space-x-2">
                           <DialogTrigger asChild>
-                            <Button variant="ghost" size="icon" onClick={() => handleEdit(ubicacion)}>
+                            <Button variant="ghost" size="icon" onClick={() => handleEditPlanta(planta)}>
                               <Edit className="h-4 w-4" />
                             </Button>
                           </DialogTrigger>
@@ -210,13 +211,13 @@ export default function UbicacionesPage() {
                               <AlertDialogHeader>
                                 <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
                                 <AlertDialogDescription>
-                                  Esta acción no se puede deshacer. Esto eliminará permanentemente la ubicación "{ubicacion.nombre}".
+                                  Esta acción no se puede deshacer. Esto eliminará permanentemente la planta "{planta.nombre}" y todos sus IDF/MDFs y equipos asociados.
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
                                 <AlertDialogAction
-                                  onClick={() => handleDelete(ubicacion.id)}
+                                  onClick={() => handleDeletePlanta(planta.id)}
                                   className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                                 >
                                   Eliminar
@@ -237,12 +238,12 @@ export default function UbicacionesPage() {
         <DialogContent className="sm:max-w-[525px]">
           <DialogHeader>
             <DialogTitle className="font-headline">
-              {editingUbicacion ? 'Editar Ubicación' : 'Nueva Ubicación'}
+              {editingUbicacion ? 'Editar Planta' : 'Nueva Planta'}
             </DialogTitle>
           </DialogHeader>
           <UbicacionForm
-            ubicacion={editingUbicacion}
-            allUbicaciones={ubicaciones}
+            ubicacion={editingUbicacion} 
+            allUbicaciones={[]} // Plantas no tienen padres, so no options needed for parentId field in this context
             onSuccess={() => setIsFormOpen(false)}
           />
         </DialogContent>

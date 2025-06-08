@@ -2,21 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import NextLink from 'next/link'; // Corrected import and kept alias for clarity
-import { doc, onSnapshot, collection, query, orderBy, getDoc } from 'firebase/firestore';
+import NextLink from 'next/link';
+import { doc, onSnapshot, collection, query, orderBy, getDoc, getCountFromServer, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
-import type { Equipo, Puerto, Ubicacion } from '@/types';
+import type { Equipo, Puerto, Ubicacion, Nodo } from '@/types';
 import { useAuth } from '@/contexts/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Cpu, Edit, HardDrive, LinkIcon, MapPin, Package, Tag, Wifi } from 'lucide-react';
+import { ArrowLeft, Cpu, Edit, HardDrive, LinkIcon, MapPin, Package, Tag, Wifi, Network } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { PortList } from './components/port-list'; 
 import { format } from 'date-fns';
-// For editing the equipment itself
-// import { EquipoForm } from '../components/equipment-form'; 
-// import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { EquipoForm } from '../components/equipment-form'; 
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 
 
 export default function EquipoDetailPage() {
@@ -27,28 +26,48 @@ export default function EquipoDetailPage() {
 
   const [equipo, setEquipo] = useState<Equipo | null>(null);
   const [ubicacion, setUbicacion] = useState<Ubicacion | null>(null);
+  const [planta, setPlanta] = useState<Ubicacion | null>(null);
+  const [connectedNodosCount, setConnectedNodosCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const { userProfile } = useAuth();
   const { toast } = useToast();
-  // const [isFormOpen, setIsFormOpen] = useState(false); // For editing modal
+  const [isFormOpen, setIsFormOpen] = useState(false);
 
   useEffect(() => {
-    if (!userProfile?.organizationId || !equipoId || !ubicacionId) return;
+    if (!userProfile?.organizationId || !equipoId || !ubicacionId) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
-    // Fetch ubicacion details (optional, but good for context)
-    const ubicacionDocRef = doc(db, 'ubicaciones', ubicacionId);
-    const unsubUbicacion = onSnapshot(ubicacionDocRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().organizationId === userProfile.organizationId) {
-        setUbicacion({ id: docSnap.id, ...docSnap.data() } as Ubicacion);
-      }
-    });
     
-    // Fetch equipo details
     const equipoDocRef = doc(db, 'equipos', equipoId);
-    const unsubscribeEquipo = onSnapshot(equipoDocRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().organizationId === userProfile.organizationId && docSnap.data().ubicacionId === ubicacionId) {
-        setEquipo({ id: docSnap.id, ...docSnap.data() } as Equipo);
+    const unsubscribeEquipo = onSnapshot(equipoDocRef, async (equipoSnap) => {
+      if (equipoSnap.exists() && equipoSnap.data().organizationId === userProfile.organizationId && equipoSnap.data().ubicacionId === ubicacionId) {
+        const equipoData = { id: equipoSnap.id, ...equipoSnap.data() } as Equipo;
+        setEquipo(equipoData);
+
+        // Fetch ubicacion (IDF/MDF)
+        const ubicacionDocRef = doc(db, 'ubicaciones', equipoData.ubicacionId);
+        const ubicacionSnap = await getDoc(ubicacionDocRef);
+        if (ubicacionSnap.exists()) {
+          const currentUbicacion = { id: ubicacionSnap.id, ...ubicacionSnap.data() } as Ubicacion;
+          setUbicacion(currentUbicacion);
+          // Fetch Planta if IDF/MDF has parentId
+          if (currentUbicacion.parentId) {
+            const plantaDocRef = doc(db, 'ubicaciones', currentUbicacion.parentId);
+            const plantaSnap = await getDoc(plantaDocRef);
+            if (plantaSnap.exists()) {
+              setPlanta({ id: plantaSnap.id, ...plantaSnap.data() } as Ubicacion);
+            }
+          }
+        }
+        
+        // Count connected nodos
+        const puertosQuery = query(collection(db, 'puertos'), where('equipoId', '==', equipoId), where('estado', '==', 'Ocupado'), where('nodoId', '!=', null));
+        const puertosSnap = await getCountFromServer(puertosQuery);
+        setConnectedNodosCount(puertosSnap.data().count);
+
       } else {
         toast({ title: "Error", description: "Equipo no encontrado o no tienes acceso.", variant: "destructive" });
         router.push(`/dashboard/ubicaciones/${ubicacionId}/equipos`);
@@ -62,7 +81,6 @@ export default function EquipoDetailPage() {
     });
 
     return () => {
-      unsubUbicacion();
       unsubscribeEquipo();
     };
 
@@ -95,7 +113,7 @@ export default function EquipoDetailPage() {
     <div className="container mx-auto py-8">
        <Button variant="outline" size="sm" className="mb-6" asChild>
         <NextLink href={`/dashboard/ubicaciones/${ubicacionId}/equipos`}>
-          <ArrowLeft className="mr-2 h-4 w-4" /> Volver a Equipos en {ubicacion?.nombre || 'Ubicación'}
+          <ArrowLeft className="mr-2 h-4 w-4" /> Volver a Equipos en {ubicacion?.nombre || 'IDF/MDF'}
         </NextLink>
       </Button>
 
@@ -111,13 +129,22 @@ export default function EquipoDetailPage() {
                   </div>
                   <CardDescription className="mt-1">
                     <Badge variant="secondary">{equipo.tipo}</Badge> en <NextLink href={`/dashboard/ubicaciones/${ubicacionId}`} className="text-primary hover:underline">{ubicacion?.nombre || ubicacionId}</NextLink>
+                    {planta && (
+                        <>
+                         {' / '} 
+                         <NextLink href={`/dashboard/ubicaciones/${planta.id}`} className="text-primary hover:underline text-xs">
+                            {planta.nombre}
+                         </NextLink>
+                        </>
+                    )}
                   </CardDescription>
                 </div>
-                 {/* 
+                
                 <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
                   <DialogTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Edit className="mr-2 h-4 w-4" /> Editar
+                    <Button variant="outline" size="icon" className="h-8 w-8">
+                      <Edit className="h-4 w-4" />
+                       <span className="sr-only">Editar Equipo</span>
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="sm:max-w-2xl">
@@ -125,13 +152,12 @@ export default function EquipoDetailPage() {
                       <DialogTitle className="font-headline">Editar Equipo</DialogTitle>
                     </DialogHeader>
                     <EquipoForm
-                      ubicacionId={ubicacionId}
+                      ubicacionId={ubicacionId} // This is the IDF/MDF ID
                       equipo={equipo}
                       onSuccess={() => setIsFormOpen(false)}
                     />
                   </DialogContent>
                 </Dialog>
-                */}
               </div>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
@@ -143,7 +169,10 @@ export default function EquipoDetailPage() {
               <p><strong>Tag RFID:</strong> {equipo.rfidTagId ? <Badge variant="outline"><Wifi className="w-3 h-3 mr-1"/>{equipo.rfidTagId}</Badge> : 'N/A'}</p>
               <p><strong>Posición Rack (U):</strong> {equipo.rackPositionU || 'N/A'}</p>
               <p><strong>Estado:</strong> <Badge variant={equipo.estado === 'Activo' ? 'default' : equipo.estado === 'Inactivo' ? 'destructive' : 'secondary'} className={equipo.estado === 'Activo' ? 'bg-green-500 text-white' : ''}>{equipo.estado}</Badge></p>
-              <p><strong>Total Puertos:</strong> {equipo.numeroDePuertos}</p>
+              <p className="flex items-center">
+                <Network className="h-4 w-4 mr-2 text-muted-foreground"/>
+                <strong>Nodos Conectados:</strong> {connectedNodosCount === null ? '...' : connectedNodosCount} / {equipo.numeroDePuertos} puertos
+              </p>
               <p className="text-xs text-muted-foreground pt-2">
                 Creado: {equipo.createdAt ? format(equipo.createdAt.toDate(), 'dd/MM/yyyy HH:mm') : 'N/A'} <br/>
                 Actualizado: {equipo.updatedAt ? format(equipo.updatedAt.toDate(), 'dd/MM/yyyy HH:mm') : 'N/A'}

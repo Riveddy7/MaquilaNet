@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { NodoForm } from './components/node-form'; // To be created
+import { NodoForm } from './components/node-form';
 import { useAuth } from '@/contexts/auth-context';
 import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
@@ -138,7 +138,7 @@ export default function NodosPage() {
                 </CardDescription>
               </div>
               <DialogTrigger asChild>
-                <Button onClick={handleAdd}>
+                 <Button onClick={handleAdd} className="bg-primary hover:bg-primary/90 text-primary-foreground">
                   <PlusCircle className="mr-2 h-4 w-4" /> Nuevo Nodo
                 </Button>
               </DialogTrigger>
@@ -166,11 +166,11 @@ export default function NodosPage() {
                   <NetworkIcon className="mx-auto h-12 w-12 text-muted-foreground" />
                   <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron nodos</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                     {searchTerm ? "Intenta con otra búsqueda." : "Crea un nuevo nodo para empezar."}
+                     {searchTerm ? "Intenta con otra búsqueda." : "Crea un nuevo nodo. Los nodos se asocian a puertos de equipos."}
                   </p>
                    {!searchTerm && (
                     <DialogTrigger asChild>
-                      <Button className="mt-4" onClick={handleAdd}>
+                       <Button className="mt-4 bg-primary hover:bg-primary/90 text-primary-foreground" onClick={handleAdd}>
                         <PlusCircle className="mr-2 h-4 w-4" /> Crear Nodo
                       </Button>
                     </DialogTrigger>
